@@ -1,0 +1,7 @@
+node_modules/
+__pycache__/
+*.tgz
+.public-export/
+internal/build/
+internal/*.log
+internal/npm-audit.json

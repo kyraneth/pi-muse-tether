@@ -1,0 +1,121 @@
+{
+ "source": "synthetic multipart wire scenarios; no recorded vendor wire",
+ "note": "Hand-written synthetic fixture authored for offline tests; contains no recorded vendor wire, no captured identifiers and no private data.",
+ "frames": [
+  {
+   "pid": 40001,
+   "dir": "launch",
+   "msg": {
+    "argv": [
+     "fixture-binary",
+     "--mode",
+     "rpc",
+     "--model",
+     "muse-spark-1.3",
+     "--thinking",
+     "none",
+     "--no-session-persistence",
+     "--flag-fixture",
+     "one",
+     "two"
+    ],
+    "wrapperPid": 40000
+   }
+  },
+  {
+   "pid": 40002,
+   "dir": "out",
+   "msg": {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "turn/start",
+    "params": {
+     "sessionId": "00000000-0000-4000-8000-000000000022",
+     "input": [
+      {
+       "text": "Run mcp__pi__multipart_probe_text_image on the synthetic fixture image"
+      }
+     ],
+     "reasoningEffort": "none",
+     "commandId": "00000000-0000-4000-8000-000000000016"
+    }
+   }
+  },
+  {
+   "pid": 40003,
+   "dir": "in",
+   "msg": {
+    "emittedAtMs": 1767227400000,
+    "jsonrpc": "2.0",
+    "method": "item/completed",
+    "params": {
+     "item": {
+      "args": "{}",
+      "callId": "call-fixture-image-probe",
+      "itemId": "00000000-0000-4000-8000-000000000015",
+      "kind": "toolCall",
+      "recordedAt": "2026-01-01T00:30:01.000000Z",
+      "revision": 2,
+      "status": "completed",
+      "tool": "mcp__pi__multipart_probe_text_image",
+      "turnId": "00000000-0000-4000-8000-000000000016",
+      "visibleOutput": "IMAGE_TEXT_BEGIN\nIMAGE_TEXT_END\n[MCP image content: media_type=image/png, bytes=70]"
+     },
+     "sessionId": "00000000-0000-4000-8000-000000000022",
+     "sourceRange": {
+      "first": {
+       "id": "00000000-0000-4000-8000-000000000025",
+       "sequence": 10
+      },
+      "last": {
+       "id": "00000000-0000-4000-8000-000000000025",
+       "sequence": 10
+      },
+      "stream": {
+       "id": "00000000-0000-4000-8000-000000000022",
+       "kind": "session"
+      }
+     },
+     "viewCursor": "v4:00000000-0000-4000-8000-000000000022:9"
+    }
+   }
+  },
+  {
+   "pid": 40004,
+   "dir": "in",
+   "msg": {
+    "emittedAtMs": 1767227402000,
+    "jsonrpc": "2.0",
+    "method": "item/completed",
+    "params": {
+     "item": {
+      "itemId": "00000000-0000-4000-8000-000000000032",
+      "kind": "agentMessage",
+      "messagePhase": "finalAnswer",
+      "recordedAt": "2026-01-01T00:30:03.000000Z",
+      "revision": 2,
+      "status": "completed",
+      "text": "The probe reports completion.",
+      "turnId": "00000000-0000-4000-8000-000000000016"
+     },
+     "sessionId": "00000000-0000-4000-8000-000000000022",
+     "sourceRange": {
+      "first": {
+       "id": "00000000-0000-4000-8000-000000000026",
+       "sequence": 12
+      },
+      "last": {
+       "id": "00000000-0000-4000-8000-000000000026",
+       "sequence": 12
+      },
+      "stream": {
+       "id": "00000000-0000-4000-8000-000000000022",
+       "kind": "session"
+      }
+     },
+     "viewCursor": "v4:00000000-0000-4000-8000-000000000022:11"
+    }
+   }
+  }
+ ]
+}

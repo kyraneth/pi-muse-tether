@@ -1,0 +1,285 @@
+{
+ "source": {
+  "path": "synthetic-wire/native-timeout-scenario.jsonl",
+  "sha256": "c892cacf88b5d991a3fa745cb54e21e605e8d0cedee9dd6c9889035d0733afac",
+  "head": "fedcba9876543210fedcba9876543210fedcba98",
+  "note": "Hand-written synthetic fixture authored for offline tests; contains no recorded vendor wire, no captured identifiers and no private data."
+ },
+ "frames": {
+  "approval": {
+   "jsonrpc": "2.0",
+   "method": "approval/request",
+   "params": {
+    "approvalId": "00000000-0000-4000-8000-000000000046",
+    "availableChoices": [
+     {
+      "choiceId": "allow_once",
+      "decision": "approved",
+      "label": "Allow once",
+      "scope": "once"
+     },
+     {
+      "choiceId": "allow_session",
+      "decision": "approvedForSession",
+      "label": "Allow for this session",
+      "rulePreview": "tool `mcp__pi__bash`",
+      "scope": "session"
+     },
+     {
+      "choiceId": "allow_local_mcp_tool",
+      "decision": "approvedPolicyAmendment",
+      "label": "Always allow this MCP tool",
+      "rulePreview": "tool `mcp__pi__bash`",
+      "scope": "localPersistent"
+     },
+     {
+      "acceptsFeedback": true,
+      "choiceId": "abort",
+      "decision": "abort",
+      "label": "Reject",
+      "scope": "once"
+     }
+    ],
+    "currentRequirementId": {
+     "approvalId": "00000000-0000-4000-8000-000000000046",
+     "sourceIndex": 0
+    },
+    "itemId": "00000000-0000-4000-8000-000000000046",
+    "rawArgs": "{\"command\": \"echo fixture-timeout-probe\", \"timeout\": 300000}",
+    "sessionId": "00000000-0000-4000-8000-000000000047",
+    "sourceRange": {
+     "first": {
+      "id": "00000000-0000-4000-8000-000000000048",
+      "sequence": 100
+     },
+     "last": {
+      "id": "00000000-0000-4000-8000-000000000048",
+      "sequence": 100
+     },
+     "stream": {
+      "id": "00000000-0000-4000-8000-000000000047",
+      "kind": "session"
+     }
+    },
+    "subject": {
+     "kind": "tool",
+     "toolName": "mcp__pi__bash"
+    },
+    "taskId": "00000000-0000-4000-8000-000000000046",
+    "toolCallId": "call-fixture-timeout-bash",
+    "toolName": "mcp__pi__bash",
+    "turnId": "00000000-0000-4000-8000-000000000049",
+    "viewCursor": "v4:00000000-0000-4000-8000-000000000047:100",
+    "judgeEscalated": false,
+    "protectedWrite": false
+   },
+   "id": 201
+  },
+  "commit": {
+   "emittedAtMs": 1767226000200,
+   "jsonrpc": "2.0",
+   "method": "log/record",
+   "params": {
+    "subscriptionId": 1,
+    "record": {
+     "causation_id": null,
+     "durability": "durable",
+     "id": "00000000-0000-4000-8000-000000000050",
+     "payload": {
+      "kind": "run",
+      "run_id": "00000000-0000-4000-8000-000000000049",
+      "source_run_record_id": "00000000-0000-4000-8000-000000000051",
+      "source_run_record_sequence": 200,
+      "payload_type": "runtime.session",
+      "payload_schema_version": 1,
+      "record_type": "event",
+      "schema_version": 1,
+      "sequence": 200,
+      "stream": {
+       "id": "00000000-0000-4000-8000-000000000047",
+       "kind": "session"
+      },
+      "recorded_at": 1767226000000200,
+      "event": {
+       "kind": "assistant_tool_calls_committed",
+       "message_id": "00000000-0000-4000-8000-000000000051",
+       "response_id": "resp_fixture_0002",
+       "tool_calls": [
+        {
+         "args": "{\"command\": \"echo fixture-timeout-probe\", \"timeout\": 300000}",
+         "call_id": "call-fixture-timeout-bash",
+         "id": "fc-fixture-timeout-bash",
+         "name": "mcp__pi__bash"
+        }
+       ]
+      }
+     }
+    }
+   }
+  },
+  "started": {
+   "emittedAtMs": 1767226000001,
+   "jsonrpc": "2.0",
+   "method": "item/started",
+   "params": {
+    "item": {
+     "args": "{\"command\": \"echo fixture-timeout-probe\", \"timeout\": 300000}",
+     "callId": "call-fixture-timeout-bash",
+     "itemId": "00000000-0000-4000-8000-000000000046",
+     "kind": "toolCall",
+     "recordedAt": "2026-01-01T00:10:00.000000Z",
+     "revision": 1,
+     "status": "inProgress",
+     "tool": "mcp__pi__bash",
+     "turnId": "00000000-0000-4000-8000-000000000049"
+    },
+    "sessionId": "00000000-0000-4000-8000-000000000047",
+    "sourceRange": {
+     "first": {
+      "id": "00000000-0000-4000-8000-000000000048",
+      "sequence": 100
+     },
+     "last": {
+      "id": "00000000-0000-4000-8000-000000000048",
+      "sequence": 100
+     },
+     "stream": {
+      "id": "00000000-0000-4000-8000-000000000047",
+      "kind": "session"
+     }
+    },
+    "viewCursor": "v4:00000000-0000-4000-8000-000000000047:101"
+   }
+  },
+  "timedOut": {
+   "emittedAtMs": 1767226300001,
+   "jsonrpc": "2.0",
+   "method": "item/completed",
+   "params": {
+    "item": {
+     "args": "{\"command\": \"echo fixture-timeout-probe\", \"timeout\": 300000}",
+     "callId": "call-fixture-timeout-bash",
+     "itemId": "00000000-0000-4000-8000-000000000046",
+     "kind": "toolCall",
+     "recordedAt": "2026-01-01T00:15:00.000000Z",
+     "revision": 2,
+     "status": "timedOut",
+     "tool": "mcp__pi__bash",
+     "turnId": "00000000-0000-4000-8000-000000000049",
+     "visibleOutput": "tool timed out"
+    },
+    "sessionId": "00000000-0000-4000-8000-000000000047",
+    "sourceRange": {
+     "first": {
+      "id": "00000000-0000-4000-8000-000000000048",
+      "sequence": 100
+     },
+     "last": {
+      "id": "00000000-0000-4000-8000-000000000048",
+      "sequence": 104
+     },
+     "stream": {
+      "id": "00000000-0000-4000-8000-000000000047",
+      "kind": "session"
+     }
+    },
+    "viewCursor": "v4:00000000-0000-4000-8000-000000000047:102"
+   }
+  },
+  "nativeResult": {
+   "emittedAtMs": 1767226000210,
+   "jsonrpc": "2.0",
+   "method": "log/record",
+   "params": {
+    "subscriptionId": 1,
+    "record": {
+     "causation_id": null,
+     "durability": "durable",
+     "id": "00000000-0000-4000-8000-000000000055",
+     "payload": {
+      "kind": "run",
+      "run_id": "00000000-0000-4000-8000-000000000049",
+      "source_run_record_id": "00000000-0000-4000-8000-000000000056",
+      "source_run_record_sequence": 210,
+      "payload_type": "runtime.session",
+      "payload_schema_version": 1,
+      "record_type": "event",
+      "schema_version": 1,
+      "sequence": 210,
+      "stream": {
+       "id": "00000000-0000-4000-8000-000000000047",
+       "kind": "session"
+      },
+      "recorded_at": 1767226000000210,
+      "event": {
+       "kind": "assistant_tool_calls_committed",
+       "message_id": "00000000-0000-4000-8000-000000000057",
+       "response_id": "resp_fixture_0002"
+      }
+     }
+    }
+   }
+  },
+  "nextCommit": {
+   "emittedAtMs": 1767226000220,
+   "jsonrpc": "2.0",
+   "method": "log/record",
+   "params": {
+    "subscriptionId": 1,
+    "record": {
+     "causation_id": null,
+     "durability": "durable",
+     "id": "00000000-0000-4000-8000-000000000056",
+     "payload": {
+      "kind": "run",
+      "run_id": "00000000-0000-4000-8000-000000000049",
+      "source_run_record_id": "00000000-0000-4000-8000-000000000057",
+      "source_run_record_sequence": 220,
+      "payload_type": "runtime.session",
+      "payload_schema_version": 1,
+      "record_type": "event",
+      "schema_version": 1,
+      "sequence": 220,
+      "stream": {
+       "id": "00000000-0000-4000-8000-000000000047",
+       "kind": "session"
+      },
+      "recorded_at": 1767226000000220,
+      "event": {
+       "kind": "assistant_tool_calls_committed",
+       "message_id": "00000000-0000-4000-8000-000000000058",
+       "response_id": "resp_fixture_0002"
+      }
+     }
+    }
+   }
+  },
+  "terminal": {
+   "emittedAtMs": 1767226301000,
+   "jsonrpc": "2.0",
+   "method": "turn/completed",
+   "params": {
+    "durationMs": 301000,
+    "sessionId": "00000000-0000-4000-8000-000000000047",
+    "terminal": "completed",
+    "timeToFirstTokenMs": 1200,
+    "turnId": "00000000-0000-4000-8000-000000000049",
+    "viewCursor": "v4:00000000-0000-4000-8000-000000000047:103",
+    "sourceRange": {
+     "first": {
+      "id": "00000000-0000-4000-8000-00000000004a",
+      "sequence": 110
+     },
+     "last": {
+      "id": "00000000-0000-4000-8000-00000000004a",
+      "sequence": 110
+     },
+     "stream": {
+      "id": "00000000-0000-4000-8000-000000000047",
+      "kind": "session"
+     }
+    }
+   }
+  }
+ }
+}

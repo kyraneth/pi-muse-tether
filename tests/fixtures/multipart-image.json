@@ -1,0 +1,30 @@
+{
+ "scenario": "text_image",
+ "note": "Hand-written synthetic fixture authored for offline tests; contains no recorded vendor wire, no captured identifiers and no private data.",
+ "sent": {
+  "content": [
+   {
+    "type": "text",
+    "text": "IMAGE_TEXT_BEGIN\nIMAGE_TEXT_END"
+   },
+   {
+    "type": "image",
+    "mimeType": "image/png",
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGNwSJgARAAHtwJhrAn+bgAAAABJRU5ErkJggg=="
+   }
+  ],
+  "isError": false
+ },
+ "item": {
+  "args": "{}",
+  "callId": "call-fixture-image-probe",
+  "itemId": "00000000-0000-4000-8000-000000000015",
+  "kind": "toolCall",
+  "recordedAt": "2026-01-01T00:30:01.000000Z",
+  "revision": 2,
+  "status": "completed",
+  "tool": "mcp__pi__multipart_probe_text_image",
+  "turnId": "00000000-0000-4000-8000-000000000016",
+  "visibleOutput": "IMAGE_TEXT_BEGIN\nIMAGE_TEXT_END\n[MCP image content: media_type=image/png, bytes=70]"
+ }
+}

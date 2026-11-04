@@ -1,0 +1,87 @@
+{
+ "source": {
+  "path": "synthetic-wire/vendor-retry-scenario.jsonl",
+  "sha256": "c892cacf88b5d991a3fa745cb54e21e605e8d0cedee9dd6c9889035d0733afac",
+  "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "note": "Hand-written synthetic fixture authored for offline tests; contains no recorded vendor wire, no captured identifiers and no private data."
+ },
+ "batch": {
+  "emittedAtMs": 1767226400000,
+  "jsonrpc": "2.0",
+  "method": "log/record",
+  "params": {
+   "subscriptionId": 1,
+   "record": {
+    "causation_id": null,
+    "durability": "durable",
+    "id": "00000000-0000-4000-8000-000000000060",
+    "payload": {
+     "kind": "run",
+     "run_id": "00000000-0000-4000-8000-000000000062",
+     "source_run_record_id": "00000000-0000-4000-8000-000000000063",
+     "source_run_record_sequence": 300,
+     "payload_type": "runtime.session",
+     "payload_schema_version": 1,
+     "record_type": "event",
+     "schema_version": 1,
+     "sequence": 300,
+     "stream": {
+      "id": "00000000-0000-4000-8000-000000000064",
+      "kind": "session"
+     },
+     "recorded_at": 1767226400000000,
+     "event": {
+      "kind": "assistant_tool_calls_committed",
+      "message_id": "00000000-0000-4000-8000-000000000061",
+      "response_id": "resp_fixture_0003",
+      "tool_calls": [
+       {
+        "args": "{\"limit\": 20, \"offset\": 40, \"path\": \"packages/example/src/scan/sample.ts\"}",
+        "call_id": "call-fixture-retry-read",
+        "id": "fc-fixture-retry-read",
+        "name": "mcp__pi__read"
+       },
+       {
+        "args": "{\"limit\": 5, \"offset\": 0, \"path\": \"packages/example/src/scan/other.ts\"}",
+        "call_id": "call-fixture-retry-peek",
+        "id": "fc-fixture-retry-peek",
+        "name": "mcp__pi__read"
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "retry": {
+  "emittedAtMs": 1767226600000,
+  "jsonrpc": "2.0",
+  "method": "turn/modelRetryScheduled",
+  "params": {
+   "attempt": 1,
+   "errorKind": "server",
+   "httpStatus": 503,
+   "maxAttempts": 10,
+   "nextAttempt": 2,
+   "retryDelayMs": 60000,
+   "sessionId": "00000000-0000-4000-8000-000000000064",
+   "sourceRange": {
+    "first": {
+     "id": "00000000-0000-4000-8000-000000000065",
+     "sequence": 300
+    },
+    "last": {
+     "id": "00000000-0000-4000-8000-000000000065",
+     "sequence": 300
+    },
+    "stream": {
+     "id": "00000000-0000-4000-8000-000000000064",
+     "kind": "session"
+    }
+   },
+   "system": "meta",
+   "turnId": "00000000-0000-4000-8000-000000000066",
+   "viewCursor": "v4:00000000-0000-4000-8000-000000000064:200"
+  }
+ }
+}

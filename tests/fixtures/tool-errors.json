@@ -1,0 +1,172 @@
+{
+ "source": "synthetic error receipt scenarios; no recorded vendor wire",
+ "piErrors": [
+  {
+   "role": "toolResult",
+   "toolCallId": "00000000-0000-4000-8000-000000000034",
+   "toolName": "read",
+   "content": [
+    {
+     "type": "text",
+     "text": "ENOENT: no such file or directory, access '/home/example/fixture-work/missing-input.ts'"
+    }
+   ],
+   "details": {},
+   "isError": true,
+   "durationMs": 4,
+   "timestamp": 1767226700000
+  },
+  {
+   "role": "toolResult",
+   "toolCallId": "00000000-0000-4000-8000-000000000035",
+   "toolName": "read",
+   "content": [
+    {
+     "type": "text",
+     "text": "ENOENT: no such file or directory, access '/home/example/fixture-work/missing-input.ts'"
+    }
+   ],
+   "details": {},
+   "isError": true,
+   "durationMs": 5,
+   "timestamp": 1767226700001
+  },
+  {
+   "role": "toolResult",
+   "toolCallId": "00000000-0000-4000-8000-000000000036",
+   "toolName": "read",
+   "content": [
+    {
+     "type": "text",
+     "text": "ENOENT: no such file or directory, access '/home/example/fixture-work/missing-input.ts'"
+    }
+   ],
+   "details": {},
+   "isError": true,
+   "durationMs": 6,
+   "timestamp": 1767226700002
+  }
+ ],
+ "frames": [
+  {
+   "file": "tool-error-scenarios.jsonl",
+   "line": 101,
+   "frame": {
+    "emittedAtMs": 1767226701000,
+    "jsonrpc": "2.0",
+    "method": "item/completed",
+    "params": {
+     "item": {
+      "args": "{\"path\": \"packages/example/tests/sample.test.mjs\"}",
+      "callId": "call-fixture-err-missing",
+      "itemId": "00000000-0000-4000-8000-000000000037",
+      "kind": "toolCall",
+      "recordedAt": "2026-01-01T00:20:00.000000Z",
+      "revision": 1,
+      "status": "failed",
+      "tool": "mcp__pi__read",
+      "turnId": "00000000-0000-4000-8000-000000000038",
+      "sessionId": "00000000-0000-4000-8000-000000000039",
+      "sourceRange": {
+       "first": {
+        "id": "00000000-0000-4000-8000-00000000003a",
+        "sequence": 400
+       },
+       "last": {
+        "id": "00000000-0000-4000-8000-00000000003a",
+        "sequence": 400
+       },
+       "stream": {
+        "id": "00000000-0000-4000-8000-000000000039",
+        "kind": "session"
+       }
+      },
+      "viewCursor": "v4:00000000-0000-4000-8000-000000000039:410",
+      "failureReason": "ENOENT: no such file or directory, access '/home/example/fixture-work/missing-input.ts'",
+      "visibleOutput": "tool failed: ENOENT: no such file or directory, access '/home/example/fixture-work/missing-input.ts'",
+      "statusLine": "tool action serialized: parallel eligibility not proven"
+     }
+    }
+   }
+  },
+  {
+   "file": "tool-error-scenarios.jsonl",
+   "line": 110,
+   "frame": {
+    "emittedAtMs": 1767226701001,
+    "jsonrpc": "2.0",
+    "method": "item/completed",
+    "params": {
+     "item": {
+      "args": "{\"path\": \"packages/example/tests/other.test.mjs\"}",
+      "callId": "call-fixture-err-denied",
+      "itemId": "00000000-0000-4000-8000-000000000042",
+      "kind": "toolCall",
+      "recordedAt": "2026-01-01T00:20:01.000000Z",
+      "revision": 2,
+      "status": "rejected",
+      "tool": "mcp__pi__read",
+      "turnId": "00000000-0000-4000-8000-000000000038",
+      "sessionId": "00000000-0000-4000-8000-000000000039",
+      "sourceRange": {
+       "first": {
+        "id": "00000000-0000-4000-8000-00000000003a",
+        "sequence": 401
+       },
+       "last": {
+        "id": "00000000-0000-4000-8000-00000000003a",
+        "sequence": 401
+       },
+       "stream": {
+        "id": "00000000-0000-4000-8000-000000000039",
+        "kind": "session"
+       }
+      },
+      "viewCursor": "v4:00000000-0000-4000-8000-000000000039:411",
+      "failureKind": "approval_denied",
+      "failureReason": "approval aborted"
+     }
+    }
+   }
+  },
+  {
+   "file": "tool-error-scenarios.jsonl",
+   "line": 119,
+   "frame": {
+    "emittedAtMs": 1767226701002,
+    "jsonrpc": "2.0",
+    "method": "item/completed",
+    "params": {
+     "item": {
+      "args": "{\"path\": \"packages/example/src/sample.ts\"}",
+      "callId": "call-fixture-err-cancelled",
+      "itemId": "00000000-0000-4000-8000-000000000044",
+      "kind": "toolCall",
+      "recordedAt": "2026-01-01T00:20:02.000000Z",
+      "revision": 3,
+      "status": "failed",
+      "tool": "mcp__pi__read",
+      "turnId": "00000000-0000-4000-8000-000000000038",
+      "sessionId": "00000000-0000-4000-8000-000000000039",
+      "sourceRange": {
+       "first": {
+        "id": "00000000-0000-4000-8000-00000000003a",
+        "sequence": 402
+       },
+       "last": {
+        "id": "00000000-0000-4000-8000-00000000003a",
+        "sequence": 402
+       },
+       "stream": {
+        "id": "00000000-0000-4000-8000-000000000039",
+        "kind": "session"
+       }
+      },
+      "viewCursor": "v4:00000000-0000-4000-8000-000000000039:412",
+      "visibleOutput": "tool cancelled"
+     }
+    }
+   }
+  }
+ ]
+}

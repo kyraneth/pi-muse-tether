@@ -1,0 +1,25 @@
+{
+ "scenario": "redacted_read",
+ "note": "Hand-written synthetic fixture authored for offline tests; contains no recorded vendor wire, no captured identifiers and no private data.",
+ "sent": {
+  "content": [
+   {
+    "type": "text",
+    "text": "alpha-context-before sk- alpha-context-after\nbeta-context-before sk-A beta-context-after\ngamma-context-before sk-SECRET12 gamma-context-after"
+   }
+  ],
+  "isError": false
+ },
+ "item": {
+  "args": "{\"path\": \"packages/example/src/scan/sample.ts\"}",
+  "callId": "call-fixture-redacted-read",
+  "itemId": "00000000-0000-4000-8000-00000000004b",
+  "kind": "toolCall",
+  "recordedAt": "2026-01-01T00:40:00.000000Z",
+  "revision": 2,
+  "status": "completed",
+  "tool": "mcp__pi__read",
+  "turnId": "00000000-0000-4000-8000-00000000004c",
+  "visibleOutput": "alpha-context-before [REDACTED] alpha-context-after\nbeta-context-before [REDACTED] beta-context-after\ngamma-context-before [REDACTED] gamma-context-after"
+ }
+}

@@ -1,0 +1,263 @@
+{
+ "source": {
+  "path": "synthetic-wire/invalid-batch-scenario.jsonl",
+  "sha256": "c892cacf88b5d991a3fa745cb54e21e605e8d0cedee9dd6c9889035d0733afac",
+  "head": "0000000000000000000000000000000000000000",
+  "note": "Hand-written synthetic fixture authored for offline tests; contains no recorded vendor wire, no captured identifiers and no private data."
+ },
+ "frames": {
+  "invalidApproval": {
+   "id": 101,
+   "jsonrpc": "2.0",
+   "method": "approval/request",
+   "params": {
+    "approvalId": "00000000-0000-4000-8000-000000000001",
+    "availableChoices": [
+     {
+      "choiceId": "allow_once",
+      "decision": "approved",
+      "label": "Allow once",
+      "scope": "once"
+     },
+     {
+      "choiceId": "allow_session",
+      "decision": "approvedForSession",
+      "label": "Allow for this session",
+      "rulePreview": "tool `mcp__pi__edit`",
+      "scope": "session"
+     },
+     {
+      "choiceId": "allow_local_mcp_tool",
+      "decision": "approvedPolicyAmendment",
+      "label": "Always allow this MCP tool",
+      "rulePreview": "tool `mcp__pi__edit`",
+      "scope": "localPersistent"
+     },
+     {
+      "acceptsFeedback": true,
+      "choiceId": "abort",
+      "decision": "abort",
+      "label": "Reject",
+      "scope": "once"
+     }
+    ],
+    "currentRequirementId": {
+     "approvalId": "00000000-0000-4000-8000-000000000001",
+     "sourceIndex": 0
+    },
+    "itemId": "00000000-0000-4000-8000-000000000001",
+    "rawArgs": "{\"edits\": \"[{\\\"oldText\\\": \\\"  if (feature.enabled) {\\\\n    stage = 'summary';\\\\n    render(rows);\\\", \\\"newText\\\": \\\"  if (feature.enabled) {\\\\n    stage = 'summary';\\\\n    ctx.throwIfAborted();\\\\n    render(rows, ctx.signal);\\\"}]\"}",
+    "sessionId": "00000000-0000-4000-8000-0000000000f0",
+    "sourceRange": {
+     "first": {
+      "id": "00000000-0000-4000-8000-0000000000f1",
+      "sequence": 10
+     },
+     "last": {
+      "id": "00000000-0000-4000-8000-0000000000f1",
+      "sequence": 10
+     },
+     "stream": {
+      "id": "00000000-0000-4000-8000-0000000000f0",
+      "kind": "session"
+     }
+    },
+    "subject": {
+     "kind": "tool",
+     "toolName": "mcp__pi__edit"
+    },
+    "taskId": "00000000-0000-4000-8000-000000000001",
+    "toolCallId": "call-fixture-invalid-edit",
+    "toolName": "mcp__pi__edit",
+    "turnId": "00000000-0000-4000-8000-0000000000f2",
+    "viewCursor": "v4:00000000-0000-4000-8000-0000000000f0:10",
+    "judgeEscalated": false,
+    "protectedWrite": false
+   }
+  },
+  "invalidCommit": {
+   "jsonrpc": "2.0",
+   "method": "log/record",
+   "params": {
+    "subscriptionId": 1,
+    "record": {
+     "causation_id": null,
+     "durability": "durable",
+     "id": "00000000-0000-4000-8000-000000000100",
+     "payload": {
+      "kind": "run",
+      "run_id": "00000000-0000-4000-8000-0000000000f2",
+      "source_run_record_id": "00000000-0000-4000-8000-000000000101",
+      "source_run_record_sequence": 30,
+      "payload_type": "runtime.session",
+      "payload_schema_version": 1,
+      "record_type": "event",
+      "schema_version": 1,
+      "sequence": 30,
+      "stream": {
+       "id": "00000000-0000-4000-8000-0000000000f0",
+       "kind": "session"
+      },
+      "recorded_at": 1767225600000030,
+      "event": {
+       "kind": "assistant_tool_calls_committed",
+       "message_id": "00000000-0000-4000-8000-000000000102",
+       "response_id": "resp_fixture_0001",
+       "tool_calls": [
+        {
+         "args": "{\"edits\": \"[{\\\"oldText\\\": \\\"  if (feature.enabled) {\\\\n    stage = 'summary';\\\\n    render(rows);\\\", \\\"newText\\\": \\\"  if (feature.enabled) {\\\\n    stage = 'summary';\\\\n    ctx.throwIfAborted();\\\\n    render(rows, ctx.signal);\\\"}]\"}",
+         "call_id": "call-fixture-invalid-edit",
+         "id": "fc-fixture-invalid-edit",
+         "name": "mcp__pi__edit"
+        }
+       ]
+      }
+     }
+    }
+   }
+  },
+  "rejection": {
+   "params": {
+    "item": {
+     "args": "{\"edits\": \"[{\\\"oldText\\\": \\\"  if (feature.enabled) {\\\\n    stage = 'summary';\\\\n    render(rows);\\\", \\\"newText\\\": \\\"  if (feature.enabled) {\\\\n    stage = 'summary';\\\\n    ctx.throwIfAborted();\\\\n    render(rows, ctx.signal);\\\"}]\"}",
+     "callId": "call-fixture-invalid-edit",
+     "failureKind": "approval_denied",
+     "failureReason": "approval aborted",
+     "itemId": "00000000-0000-4000-8000-000000000001",
+     "kind": "toolCall",
+     "recordedAt": "2026-01-01T00:00:01.000000Z",
+     "revision": 1,
+     "status": "rejected",
+     "tool": "mcp__pi__edit",
+     "turnId": "00000000-0000-4000-8000-0000000000f2",
+     "sessionId": "00000000-0000-4000-8000-0000000000f0",
+     "sourceRange": {
+      "first": {
+       "id": "00000000-0000-4000-8000-0000000000f1",
+       "sequence": 10
+      },
+      "last": {
+       "id": "00000000-0000-4000-8000-0000000000f1",
+       "sequence": 10
+      },
+      "stream": {
+       "id": "00000000-0000-4000-8000-0000000000f0",
+       "kind": "session"
+      }
+     },
+     "viewCursor": "v4:00000000-0000-4000-8000-0000000000f0:11"
+    }
+   }
+  },
+  "nextApproval": {
+   "id": 102,
+   "jsonrpc": "2.0",
+   "method": "approval/request",
+   "params": {
+    "approvalId": "00000000-0000-4000-8000-000000000010",
+    "availableChoices": [
+     {
+      "choiceId": "allow_once",
+      "decision": "approved",
+      "label": "Allow once",
+      "scope": "once"
+     },
+     {
+      "choiceId": "allow_session",
+      "decision": "approvedForSession",
+      "label": "Allow for this session",
+      "rulePreview": "tool `mcp__pi__read`",
+      "scope": "session"
+     },
+     {
+      "choiceId": "allow_local_mcp_tool",
+      "decision": "approvedPolicyAmendment",
+      "label": "Always allow this MCP tool",
+      "rulePreview": "tool `mcp__pi__read`",
+      "scope": "localPersistent"
+     },
+     {
+      "acceptsFeedback": true,
+      "choiceId": "abort",
+      "decision": "abort",
+      "label": "Reject",
+      "scope": "once"
+     }
+    ],
+    "currentRequirementId": {
+     "approvalId": "00000000-0000-4000-8000-000000000010",
+     "sourceIndex": 0
+    },
+    "itemId": "00000000-0000-4000-8000-000000000010",
+    "rawArgs": "{\"limit\": 20, \"offset\": 333, \"path\": \"packages/example/src/scan/sample.ts\"}",
+    "sessionId": "00000000-0000-4000-8000-0000000000f0",
+    "sourceRange": {
+     "first": {
+      "id": "00000000-0000-4000-8000-0000000000f3",
+      "sequence": 20
+     },
+     "last": {
+      "id": "00000000-0000-4000-8000-0000000000f3",
+      "sequence": 20
+     },
+     "stream": {
+      "id": "00000000-0000-4000-8000-0000000000f0",
+      "kind": "session"
+     }
+    },
+    "subject": {
+     "kind": "tool",
+     "toolName": "mcp__pi__read"
+    },
+    "taskId": "00000000-0000-4000-8000-000000000010",
+    "toolCallId": "call-fixture-valid-read",
+    "toolName": "mcp__pi__read",
+    "turnId": "00000000-0000-4000-8000-0000000000f2",
+    "viewCursor": "v4:00000000-0000-4000-8000-0000000000f0:20",
+    "judgeEscalated": false,
+    "protectedWrite": false
+   }
+  },
+  "nextCommit": {
+   "jsonrpc": "2.0",
+   "method": "log/record",
+   "params": {
+    "subscriptionId": 1,
+    "record": {
+     "causation_id": null,
+     "durability": "durable",
+     "id": "00000000-0000-4000-8000-000000000110",
+     "payload": {
+      "kind": "run",
+      "run_id": "00000000-0000-4000-8000-0000000000f2",
+      "source_run_record_id": "00000000-0000-4000-8000-000000000111",
+      "source_run_record_sequence": 40,
+      "payload_type": "runtime.session",
+      "payload_schema_version": 1,
+      "record_type": "event",
+      "schema_version": 1,
+      "sequence": 40,
+      "stream": {
+       "id": "00000000-0000-4000-8000-0000000000f0",
+       "kind": "session"
+      },
+      "recorded_at": 1767225600000040,
+      "event": {
+       "kind": "assistant_tool_calls_committed",
+       "message_id": "00000000-0000-4000-8000-000000000112",
+       "response_id": "resp_fixture_0001",
+       "tool_calls": [
+        {
+         "args": "{\"limit\": 20, \"offset\": 333, \"path\": \"packages/example/src/scan/sample.ts\"}",
+         "call_id": "call-fixture-valid-read",
+         "id": "fc-fixture-valid-read",
+         "name": "mcp__pi__read"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ }
+}

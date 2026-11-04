@@ -1,0 +1,29 @@
+{
+ "scenario": "multi_text",
+ "note": "Hand-written synthetic fixture authored for offline tests; contains no recorded vendor wire, no captured identifiers and no private data.",
+ "sent": {
+  "content": [
+   {
+    "type": "text",
+    "text": "ALPHA_PART_α\nEND_ONE"
+   },
+   {
+    "type": "text",
+    "text": "BEGIN_TWO\nPART_TWO_終"
+   }
+  ],
+  "isError": false
+ },
+ "item": {
+  "args": "{}",
+  "callId": "call-fixture-text-probe",
+  "itemId": "00000000-0000-4000-8000-000000000023",
+  "kind": "toolCall",
+  "recordedAt": "2026-01-01T00:30:00.000000Z",
+  "revision": 2,
+  "status": "completed",
+  "tool": "mcp__pi__multipart_probe_multi_text",
+  "turnId": "00000000-0000-4000-8000-000000000024",
+  "visibleOutput": "ALPHA_PART_α\nEND_ONE\nBEGIN_TWO\nPART_TWO_終"
+ }
+}
