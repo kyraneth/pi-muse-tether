@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 process.umask(0o002);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Only these roots are public. New directories never enter the export implicitly.
-const allowlist = ['.gitignore', 'LICENSE', 'README.md', 'package.json', 'index.ts', 'src', 'tests', 'vitest.config.ts',
+const allowlist = ['.gitignore', 'LICENSE', 'README.md', 'CHANGELOG.md', 'package.json', 'index.ts', 'src', 'tests', 'vitest.config.ts',
   'assets/flow-dark.svg', 'assets/flow-light.svg', 'assets/flow.mmd', 'docs/DETAILS.md',
   'scripts/export-manifest', 'scripts/check-public-tree.mjs', 'scripts/install-core-main.mjs',
   'scripts/live-safety.mjs', 'scripts/live-verification.mts', 'scripts/verification-support.ts'];

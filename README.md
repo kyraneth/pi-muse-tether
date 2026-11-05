@@ -12,7 +12,7 @@ Hi, I do most of my work in Pi and I also pay for Muse Code. While Meta has not 
 
 ## Who it's for
 
-This is for you if you've built your workflow around Pi, with your own system prompt, skills, extensions and subagents, and you have a Muse subscription. Muse becomes one more entry in `/model`. You can switch to it in the middle of a session and switch back later, and Pi keeps the whole conversation.
+This is for you if you've built your workflow around Pi, with your own system prompt, skills, extensions and subagents, and you have a Muse subscription. Muse becomes one more entry in `/model`. You can switch to it in the middle of a session and switch back later, and Pi keeps the whole conversation. Pi's hooks keep working.
 
 ## Install
 
@@ -56,7 +56,7 @@ The last row is the difference you will notice most.
 - You restart Pi often in long sessions. A restart starts a new Muse client, so the next turn begins with a cold cache and processes the whole history again.
 - You need control over retries. Muse retries some server errors by itself, and I found no way to turn that off.
 - Your tool results must reach the model unchanged. Muse sometimes replaces secret-looking text with `[REDACTED]`, so I can't tell exactly what the model saw.
-- Tool images continue without killing the turn, with declared-lossy evidence rather than a pixel guarantee. PNG/JPEG worked in small live probes; GIF/WebP were accepted but not visibly rendered in one multi-image probe. The official client's error-result path drops images. See [details](https://github.com/kyraneth/pi-muse-tether/blob/main/docs/DETAILS.md).
+- You need the model to see every image your tools return. Images no longer kill the turn, but I can't prove what the model saw. It read PNG and JPEG correctly in small tests, but with six images at once it got the last JPEG wrong and said it couldn't see the GIF and WebP. Images attached to a tool error never reach it, because the official client drops them. See [details](https://github.com/kyraneth/pi-muse-tether/blob/main/docs/DETAILS.md).
 - Your tools run for a very long time. I tested one that ran for 5 minutes, and I don't know how much longer one can run.
 - You're on a datacenter network with IPv6. On some of these, Muse returned an empty model list while the same account worked over IPv4. The tether stops and tells you when this happens.
 

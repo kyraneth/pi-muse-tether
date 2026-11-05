@@ -9,7 +9,7 @@
   "homepage": "https://github.com/kyraneth/pi-muse-tether#readme",
   "bugs": {"url": "https://github.com/kyraneth/pi-muse-tether/issues"},
   "engines": {"node": ">=24"},
-  "files": ["index.ts", "src/", "README.md", "LICENSE", "assets/", "docs/DETAILS.md"],
+  "files": ["index.ts", "src/", "README.md", "CHANGELOG.md", "LICENSE", "assets/", "docs/DETAILS.md"],
   "dependencies": {
     "@muse-code/sdk": "1.4.14",
     "pi-tether-core": "0.1.1"
