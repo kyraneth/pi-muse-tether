@@ -1,0 +1,28 @@
+// Real Pi 1.5 + shipped path extension + official Muse contributor client.
+import {spawn} from 'node:child_process';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
+import {resolve,join} from 'node:path';
+import assert from 'node:assert/strict';
+const home=resolve(process.argv[2]);await mkdir(home,{recursive:true});
+const agent=join(home,'agent');await mkdir(agent,{recursive:true});
+await writeFile(join(agent,'settings.json'),JSON.stringify({packages:[resolve('.')],extensions:[resolve('tests/approval-parity-observer.ts')],retry:{enabled:false},defaultProvider:'pi-muse-tether',defaultModel:'muse-spark-1.3'}));
+const log=join(home,'fixture.jsonl');await writeFile(log,'');
+const prompt='This is an authorized synthetic validation transport test. Call bench_fixture first with EXACT arguments {"kind":"invalid-853","count":7}. Intentionally violate the enum; do not correct it before calling. After the tool returns a validation error, call it with EXACT arguments {"kind":"long-tool","count":"7"} (the quoted string is intentional: Pi coerces it to a number). Then reply exactly FIXTURE_OK_853. Do not call any other tools.';
+const child=spawn(process.execPath,['node_modules/@earendil-works/pi-coding-agent/dist/cli.js','--offline','--mode','json','--session-dir',join(home,'sessions'),'--no-mcp','--no-skills','--no-context-files','--no-prompt-templates','--no-themes','--provider','pi-muse-tether','--model','muse-spark-1.3','--thinking','minimal','--tools','bench_fixture','--system-prompt','Follow the synthetic transport test exactly.',prompt],{env:{...process.env,PI_CODING_AGENT_DIR:agent,PI_MUSE_TETHER_LIVE:'1',MUSE_NO_AUTO_UPDATE:'1',XDG_STATE_HOME:join(home,'state'),APPROVAL_PROOF_LOG:log},stdio:['ignore','pipe','pipe']});
+let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);
+const code=await new Promise((r,j)=>{child.on('error',j);child.on('close',r);});
+await writeFile(join(home,'events.jsonl'),out);await writeFile(join(home,'stderr.txt'),err);
+const rows=(await readFile(log,'utf8')).split('\n').filter(Boolean).map(JSON.parse);
+const events=out.split('\n').filter(Boolean).map(JSON.parse);
+const messages=events.filter(e=>e.type==='message_end').map(e=>e.message);
+if(rows.some(r=>r.type==='STOP_403')||messages.some(m=>/403|client_attestation_denied/.test(m.errorMessage??'')))throw Error('STOP: real 403/attestation; no replay');
+assert.equal(code,0,err);
+const native=rows.filter(r=>r.type==='native-batch').flatMap(r=>r.calls);
+assert.ok(native.some(c=>c.args.kind==='invalid-853'),'no intentionally invalid native call');
+assert.ok(native.some(c=>c.args.kind==='long-tool'),'no native repair call');
+const results=messages.filter(m=>m.role==='toolResult');
+assert.ok(results.some(m=>m.isError&&m.content.some(c=>c.text?.includes('Validation failed for tool "bench_fixture"'))),'Pi validation error did not reach transcript');
+assert.deepEqual(rows.filter(r=>r.type==='execute').map(r=>r.args),[{kind:'long-tool',count:7}]);
+assert.ok(results.some(m=>!m.isError&&m.content.some(c=>c.text==='FIXTURE_OK_853')),'Pi success absent');
+assert.ok(messages.at(-1)?.content.some(c=>c.text==='FIXTURE_OK_853'),'model did not recover');
+console.log(JSON.stringify({result:'PASS',home,nativeCalls:native.length,piResults:results.length}));

@@ -21,7 +21,8 @@ it("Pi 1.5 native prompt and actual read schema preserve bytes, warm prefix, sys
  expect(expected).toContain("the harness itself");expect(piContext({messages}).tools).toEqual(declarations);
  const first=await p.streamViaMuse(model,{messages},{}).result();expect(first.stopReason,first.errorMessage).toBe("stop");
  expect(fixtureState.opens[0].settings.run.system_prompt).toBe(expected);
- const config=JSON.parse(await readFile(fixtureState.opens[0].schemaPath,"utf8"));expect(config.tools).toEqual([{name:tool.name,description:tool.description,inputSchema:tool.parameters}]);
+ const config=JSON.parse(await readFile(fixtureState.opens[0].schemaPath,"utf8"));expect(config.tools).toEqual([{name:tool.name,description:expect.stringContaining(tool.description+"\n\nTransport notice:"),inputSchema:tool.parameters}]);
+ expect(config.tools[0].description).toContain("[REDACTED]");expect(config.tools[0].description).toContain("omitted by the official client");
  const second=await p.streamViaMuse(model,{messages:[...messages,first,user("two")]},{}).result();expect(second.stopReason).toBe("stop");expect(fixtureState.opens).toHaveLength(1);
  const changed:any={role:"system",content:"",sections:{addendum:"CHANGED_SYSTEM\n"},timestamp:1};
  const history=[...messages,first,user("two"),second,changed,user("three")];

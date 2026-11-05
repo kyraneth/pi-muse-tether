@@ -68,8 +68,8 @@ async function fixture(mode="parallel") {
     if(mode==="admission-denied"){
       frames.push({jsonrpc:"2.0",id:f.id,error:{code:-32000,message:"Account refused",data:{kind:"providerError",httpStatus:403,retryable:false}}});return;
     }
-    if(mode==="admission-retry"){
-      frames.push({jsonrpc:"2.0",id:f.id,error:{code:-32001,message:"Server temporarily busy",data:{kind:"overloaded",retryable:true}}});return;
+    if(mode==="admission-retry" || mode==="admission-quota"){
+      frames.push({jsonrpc:"2.0",id:f.id,error:{code:-32001,message:"Server temporarily busy",data:{kind:"overloaded",retryable:true,...(mode==="admission-quota"?{quota:{}}:{})}}});return;
     }
     reply(f,{commandId:p.commandId,status:"accepted",disposition:"started",turnId,startedNewTurn:true});
     notify("turn/started",{turnId,commandId:p.commandId});started.resolve();
@@ -240,7 +240,7 @@ describe("real SDK + real MCP broker on synthetic fixtures, offline",()=>{
   await flushMuseLedger();
   const rows=readFileSync(museLedgerPath(),"utf8").trim().split("\n").map(l=>JSON.parse(l));
   const row=rows.find((r:any)=>r.processId===f.host.ledger.processId&&r.type==="tool_result_vendor_redaction");
-  expect(row).toMatchObject({count:3,callId:"a",exactModelConsumption:false,rule:"unique-nonempty-intraline-context-v2"});
+  expect(row).toMatchObject({count:3,callId:"a",exactModelConsumption:false,evidence:"declared-lossy",rule:"unique-nonempty-intraline-v3"});
   const redactedText=real.sent.content[0].text;
   expect(row.spans.map((s:any)=>s.piOffsetBytes)).toEqual([redactedText.indexOf("sk-"),redactedText.indexOf("sk-A"),redactedText.indexOf("sk-SECRET12")]);
   expect(row.spans.map((s:any)=>s.piByteLen)).toEqual([3,4,11]);
@@ -287,14 +287,21 @@ describe("real SDK + real MCP broker on synthetic fixtures, offline",()=>{
   expect(f.commands.find((c:any)=>c.method==="approval/decide"&&c.params.approvalId==="approval-b").params.requirementId).toEqual({approvalId:"approval-b",sourceIndex:0});
   expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
  });
+ it("delivers empty text alongside nonempty text without replay",async()=>{
+  const f=await fixture("tool");f.capturedOutput="b";
+  const content=[{type:"text",text:""},{type:"text",text:"b"}];
+  const agent=await native(f,async()=>({content,details:{}}));await agent.prompt(user as any);
+  expect((agent.state.messages.at(-1) as any).stopReason).toBe("stop");
+  expect(f.mcpResults[0].content).toEqual(content);
+  expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
+ });
  it.each([
-  [{type:"text",text:""},{type:"text",text:"b"}],
   [{type:"image",data:"YWJj",mimeType:"image/png"}],
   [{type:"text",text:"note"},{type:"image",data:"YWJj",mimeType:"image/png"}],
  ])("rejects unprovable tool parts before any MCP response %j",async (...content)=>{
   const f=await fixture("tool"),agent=await native(f,async()=>({content,details:{}}));
   await agent.prompt(user as any);
-  expect((agent.state.messages.at(-1) as any).errorMessage).toMatch(/part boundaries/);
+  expect((agent.state.messages.at(-1) as any).errorMessage).toMatch(/malformed image/);
   expect(f.mcpResults).toBeUndefined();
  });
  it.each(multipartCaptures)("delivers $scenario through real Pi journal, SDK and MCP without replay",async capture=>{
@@ -309,7 +316,7 @@ describe("real SDK + real MCP broker on synthetic fixtures, offline",()=>{
   const images=f.ledgerRecords.filter((r:any)=>r.type==="tool_result_image_unverifiable");
   if(capture.scenario==="text_image"){
    expect(images).toHaveLength(1);
-   expect(images[0]).toMatchObject({callId:"a",piToolCallId:journal.toolCallId,itemId:"a",delivered:true,unverifiableInContent:true,exactModelConsumption:false,rule:"mcp-image-placeholder-v1",images:[{partIndex:1,byteLen:Buffer.from(capture.sent.content[1].data,"base64").length,mimeType:"image/png"}]});
+   expect(images[0]).toMatchObject({callId:"a",piToolCallId:journal.toolCallId,itemId:"a",deliveredToMcp:true,evidence:"declared-lossy",unverifiableInContent:true,exactModelConsumption:false,rule:"mcp-image-placeholder-v1",images:[{partIndex:1,byteLen:Buffer.from(capture.sent.content[1].data,"base64").length,mimeType:"image/png"}]});
    expect(images[0].images[0].sha256).toBe(createHash("sha256").update(Buffer.from(capture.sent.content[1].data,"base64")).digest("hex"));
   }else expect(images).toEqual([]);
  });
@@ -325,7 +332,7 @@ describe("real SDK + real MCP broker on synthetic fixtures, offline",()=>{
   const f=await fixture("tool");f.stored="Pi-b";
   f.mutateReceipt=(item:any)=>({...item,truncated:true,visibleOutput:"Pi-",outputRef:{id:"output",availability:"available",byteLen:4}});
   const agent=await native(f);await agent.prompt(user as any);
-  expect((agent.state.messages.at(-1) as any).errorMessage).toMatch(/tool result mismatch/);
+  expect((agent.state.messages.at(-1) as any).errorMessage).toMatch(/projection mismatch/);
  });
  it.each([{tool:"mcp__pi__other"},{args:'{"key":"wrong"}'}])("rejects receipt invocation mutation %j",async mutation=>{
   const f=await fixture("tool");f.mutateReceipt=(item:any)=>({...item,...mutation});
@@ -496,6 +503,14 @@ describe("real SDK + real MCP broker on synthetic fixtures, offline",()=>{
   const result=await f.provider.streamViaMuse(model,f.context([user])).result();expect(result.stopReason).toBe("error");
   expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
  });
+ it("never retries an overload carrying a quota refusal",async()=>{
+  const f=await fixture("admission-quota");
+  await f.provider.streamViaMuse(model,f.context([user])).result();
+  expect(f.host.retrySafe).toBe(false); expect(f.host.fencedReason).toMatch(/no replay/);
+  await f.provider.streamViaMuse(model,f.context([user])).result();
+  expect(f.opens).toBe(1); expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
+  const {assertMusePolicySafe}=await import("../src/host.js"); expect(assertMusePolicySafe).not.toThrow();
+ });
  it("leaves a known nothing-admitted overload retry to Pi's next provider call",async()=>{
   const f=await fixture("admission-retry");
   await f.provider.streamViaMuse(model,f.context([user])).result();
@@ -538,8 +553,13 @@ describe("real SDK + real MCP broker on synthetic fixtures, offline",()=>{
   it(`retry refusal stays first and unknown kinds stop: ${JSON.stringify(mutation)}`,async()=>{
    const f=await fixture("retry-complete");f.retryMutation=mutation;
    const result=await f.provider.streamViaMuse(model,f.context([user])).result();expect(result.stopReason).toBe("error");
-   expect(f.host.fencedReason).toMatch(mutation.errorKind==="newUnknownKind"?/unknown retry kind/:/latched/);
-   if(mutation.errorKind!=="newUnknownKind")await expect(f.host.submitInput("never retry")).rejects.toThrow(/latched/);
+   const quota = mutation.errorKind === "quotaExceeded" || mutation.code === "plan_usage_limit_exceeded" || !!mutation.error;
+   expect(f.host.fencedReason).toMatch(quota ? /quota refused/ : mutation.errorKind==="newUnknownKind" ? /unknown retry kind/ : /latched/);
+   await expect(f.host.submitInput("never retry")).rejects.toThrow(quota ? /quota refused/ : mutation.errorKind==="newUnknownKind" ? /unknown retry kind/ : /latched/);
+   if (quota) {
+    const {assertMusePolicySafe,museLaunchOptions}=await import("../src/host.js"); expect(assertMusePolicySafe).not.toThrow();
+    expect(()=>museLaunchOptions({cwd:process.cwd(),tools:["lookup"],promptMode:"none",echo:true})).not.toThrow();
+   }
    expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
   });
  }

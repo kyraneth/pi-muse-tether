@@ -17,7 +17,7 @@ Without `PI_MUSE_TETHER_LIVE=1`, only the synthetic offline `echo` model is regi
 
 ## Choose a model
 
-The live `model/list` catalog supplies windows, output limits, image capability and supported effort levels. Required missing models, unknown limits, empty catalogs and bundled fallback catalogs fail before inference; there is no guessed model entry.
+The live `model/list` catalog supplies windows, output limits, image capability and supported effort levels. Valid provider-catalog models register independently; missing or invalid rows are omitted, with no guessed model entry. Empty, bundled or failed discovery leaves the offline echo available, and `/muse-doctor` reports missing groups or discovery failure.
 
 | Pi model ID | Selection |
 | --- | --- |
@@ -57,7 +57,7 @@ For a desired 450,000-token compaction boundary, calculate `reserveTokens = actu
 
 ### Parallel tools, long tools, abort and steering
 
-Coding requires the pinned experimental `rawLog` capability, `session.live` subscription and complete `assistant_tool_calls_committed` boundary. Missing support fails before inference, without timers or single-call fallbacks. One Pi assistant contains the ordered tool batch; Pi executes approved tools and journals all results before native approvals are released for exact receipt retrieval. Raw records are consumed in memory, not logged wholesale.
+Coding requires the pinned experimental `rawLog` capability, `session.live` subscription and complete `assistant_tool_calls_committed` boundary. Missing support fails before inference, without timers or single-call fallbacks. One Pi assistant contains the ordered tool batch; Pi validates/coerces its original arguments and journals validation errors or execution results before native approvals are released for exact receipt retrieval. Invalid arguments therefore produce the normal Pi validation message, not an opaque native approval denial. Native/MCP identity still binds the unchanged original arguments, including when Pi coerces them for execution. Raw records are consumed in memory, not logged wholesale.
 
 **Long-tool limit:** a historical native MCP task timed out around 300 seconds while Pi was still running. Approval holding now avoids opening that native call during Pi execution. One synthetic 301-second live tool passed with the native MCP call open only briefly. That establishes the measured interval, **not unlimited approval patience or arbitrary long-build support**. No vendor no-deadline control is qualified. A late denial, timeout or host death can leave a real Pi side effect without a verified native receipt. Fencing cannot undo it or silently kill Pi's executor. Inspect uncertain effects before a new request; unknown work is never automatically replayed.
 
@@ -73,9 +73,13 @@ No pinned SDK per-turn disable-retry control is qualified. Startup retry setting
 
 Muse receipts can replace secret-like text, including source-code token prefixes, with `[REDACTED]`. **What the model actually consumed is unknown.** No supported disable-redaction control was found in the inspected pinned surfaces, and no encoding/reflow bypass is used.
 
-Accepted redaction needs nonempty single-line removed text, exact nonempty context on both sides and one unambiguous alignment. Literal markers remain literal. Line-edge, whole-line, adjacent or ambiguous loss stops. Surrounding bytes are verified, not bytes inside holes or whether those bytes were secrets. Metadata diagnostics retain offsets, lengths and hashes, never removed text. `exactModelConsumption:false` means absence of proof, not proof that input was altered.
+Accepted redaction needs nonempty single-line removed text and one unambiguous positional alignment. Line-start, line-end and whole-line loss continue as declared-lossy; adjacent vendor markers are one combined nonempty loss region, without claiming an internal split. If a marker run mixes a literal Pi marker and a new redaction, only a uniquely aligned individual-token parse may accept it. Literal markers remain literal. Ambiguous alignment, newline removal or any other changed text still stops. Surrounding bytes are verified, not bytes inside holes or whether those bytes were secrets. Metadata diagnostics retain offsets, lengths and hashes, never removed text. `exactModelConsumption:false` means absence of proof, not proof that input was altered.
 
-**Image/multipart tool-output limitation:** general ordered-part and pixel delivery remain unqualified. The verifier supports narrow text-list joins and declared-unverifiable image placeholders; placeholder metadata and hash reporting do not prove model consumption. Invalid/unqualified layouts fail before batch delivery. This differs from working user-image input/history. A simple current/imported 256×256 image probe does not establish general visual accuracy.
+**Native empty-part projection:** successful results fold chunks with LF only after accumulated nonempty output, so leading empty parts add no separator while later empty parts do. An entirely empty success has the exact native display sentinel `[MCP tool returned no content]`. Failed results instead LF-join all text parts (including leading empty text), omit images, and use `MCP tool returned an error` if their joined text is empty. These are pinned-client receipt codecs, not global text cleanup.
+
+**Image/multipart tool outputs (0.1.1):** PNG, JPEG, GIF and WebP are forwarded in arbitrary text/image layouts, including image-only, multiple images, empty text and errors. Receipt verification constructs the native ordered projection positionally; literal placeholder-shaped text and leading newlines are not stripped. Image metadata is declared-lossy, never exact pixel evidence; available `modelVisibleContent` derivatives do not upgrade that evidence. Truncated text still requires verified complete `item/readOutput` readback. Malformed encodings and genuine text/metadata mismatches still stop.
+
+**Observed vendor limits:** the official failed-MCP path exposes only text (`failureReason`) and drops images from its receipt/model view. These images are explicitly marked `modelVisibility: omitted-error-result`, not claimed seen. A six-image live probe continued and read initial PNG/JPEG correctly, but reported GIF/WebP not visibly rendered and misidentified its last JPEG. Thus GIF/WebP transport acceptance and no-turn-failure are qualified, not their pixels or universal multi-image accuracy. A separate interleaved PNG/JPEG live probe read both images correctly. No format conversion or byte-equality claim is invented.
 
 ### Quota, usage and accounting
 
@@ -83,7 +87,7 @@ Native percentage/reset telemetry may initially be absent. Rounded 0% is not pro
 
 ### Empty catalog over some IPv6 paths
 
-If startup says `Muse catalogue cannot register required live models` with an empty list, compare the official client alone:
+If `/muse-doctor` reports an empty catalog, compare the official client alone:
 
 ```sh
 muse exec --model muse-spark-1.3 "hi"

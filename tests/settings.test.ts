@@ -1,4 +1,4 @@
-import {expect,it} from 'vitest';
+import {expect,it,vi} from 'vitest';
 import {promptSettings,REMINDERS,linkHostLogin} from '../src/settings.ts';
 import {mkdtemp,mkdir,writeFile,rename,rm,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import {join} from 'node:path';
@@ -24,12 +24,12 @@ it('allows real-file atomic refresh and records metadata without reading login b
   await writeFile(join(real,'muse/auth.json'),'synthetic fixture, not a credential');
   const verify=await linkHostLogin(host,real);await verify();
   await writeFile(join(root,'refresh'),'synthetic refreshed fixture');await rename(join(root,'refresh'),join(real,'muse/auth.json'));
-  const refreshed=await verify();expect(refreshed.symlinkIntact).toBe(true);expect(refreshed.realFileChanged).toBe(true);
+  const refreshed=await verify();expect(refreshed.symlinkIntact).toBe(true);expect(refreshed.realMetadataChanged).toBe(true);
   expect(refreshed.after.inode).not.toBe(refreshed.before.inode);
-  const stable=await verify();expect(stable.realFileChanged).toBe(false);expect(stable.after).toEqual(stable.before);
+  const stable=await verify();expect(stable.realMetadataChanged).toBe(false);expect(stable.after).toEqual(stable.before);
  }finally{await rm(root,{recursive:true,force:true});}
 });
-it('metadata link guard stops private-link replacement without reading login bytes',async()=>{
+it('same-target links remain safe across identity changes; a regular-file replacement still fences without reading login bytes',async()=>{
  const root=await mkdtemp(join(tmpdir(),'login-test-'));
  try{
   const real=join(root,'real'),host=join(root,'host');await mkdir(join(real,'muse'),{recursive:true});await mkdir(join(host,'config/muse'),{recursive:true});
@@ -38,7 +38,23 @@ it('metadata link guard stops private-link replacement without reading login byt
   const second=join(root,'second');await mkdir(join(second,'config/muse'),{recursive:true});const verifySecond=await linkHostLogin(second,real);
   await writeFile(join(root,'replacement'),'synthetic replacement');await rename(join(root,'replacement'),join(host,'config/muse/auth.json'));
   await symlink(join(real,'muse/auth.json'),join(root,'replacement-link'));await rename(join(root,'replacement-link'),join(second,'config/muse/auth.json'));
+  expect((await verifySecond()).symlinkIntact).toBe(true);
   await expect(verify()).rejects.toThrow('symlink replaced');
-  await expect(verifySecond()).rejects.toThrow('symlink replaced');
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+it.each(['wrong-target','missing'] as const)('%s still fences and latches without reading login bytes',async(mutation)=>{
+ vi.resetModules();
+ const {linkHostLogin,assertLoginSafe}=await import('../src/settings.ts');
+ const root=await mkdtemp(join(tmpdir(),'login-fault-'));
+ try{
+  const real=join(root,'real'),host=join(root,'host');await mkdir(join(real,'muse'),{recursive:true});await mkdir(join(host,'config/muse'),{recursive:true});
+  await writeFile(join(real,'muse/auth.json'),'synthetic fixture, not a credential');
+  const verify=await linkHostLogin(host,real),link=join(host,'config/muse/auth.json');
+  await rm(link);
+  if(mutation==='wrong-target')await symlink(join(root,'other-login'),link);
+  const message=mutation==='missing'?'symlink missing':'symlink replaced';
+  await expect(verify()).rejects.toThrow(message);
+  await rm(link,{force:true});await symlink(join(real,'muse/auth.json'),link);
+  expect(()=>assertLoginSafe()).toThrow(message);
  }finally{await rm(root,{recursive:true,force:true});}
 });

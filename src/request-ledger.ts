@@ -1,14 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { metadataLedger } from "pi-tether-core/metadata-ledger";
 import { nativeCounters } from "./usage.js";
 import { quotaPayload } from "./rate-limit.js";
 const num = (v: any) =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 export function museLedgerPath() {
+  const state = process.env.XDG_STATE_HOME;
+  // XDG Base Directory requires absolute values; empty/relative values are
+  // treated as unset, never a request to write metadata beneath the cwd.
   return join(
-    process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"),
+    state && isAbsolute(state) ? state : join(homedir(), ".local/state"),
     "pi-muse-tether",
     "requests.jsonl",
   );

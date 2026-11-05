@@ -22,6 +22,9 @@ for line in sys.stdin:
     elif method == 'model/list':
         with open(os.environ['CATALOG_ENTRY_FIXTURE']) as fixture:
             result = json.load(fixture)
+        if result.get('offlineFailure'):
+            print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'error': {'code': -32000, 'message': 'synthetic discovery failure'}}), flush=True)
+            continue
     else:
         raise SystemExit('Offline discovery fixture refuses ' + str(method))
     print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)

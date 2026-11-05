@@ -1,4 +1,4 @@
-import { museCatalogModels } from "./src/catalog.js";
+import { museCatalogAssessment, museCatalogModels } from "./src/catalog.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { registerApiDispatch } from "pi-tether-core/register";
@@ -18,8 +18,15 @@ export async function registerMuseExtension(pi: ExtensionAPI, provider = {stream
   if (!template)
     throw new Error("Pi supplied no catalog template for offline echo");
   const stream = streamViaMuse;
-  const catalog = process.env.PI_MUSE_TETHER_LIVE === "1" ? await discoverMuseCatalog() : undefined;
+  let catalog: Awaited<ReturnType<typeof discoverMuseCatalog>> | undefined;
+  let catalogueError: string | undefined;
+  if (process.env.PI_MUSE_TETHER_LIVE === "1") {
+    try { catalog = await discoverMuseCatalog(); }
+    catch (error) { catalogueError = error instanceof Error ? error.message : String(error); }
+  }
   const liveModels = catalog ? museCatalogModels(catalog) : [];
+  const catalogueDiagnostics = catalog ? museCatalogAssessment(catalog).diagnostics :
+    { status: catalogueError ? "discovery failed" : "live disabled", ...(catalogueError ? {error: catalogueError} : {}) };
   registerApiDispatch(ID, stream);
   pi.registerProvider(ID, {
     api: ID,
@@ -39,7 +46,7 @@ export async function registerMuseExtension(pi: ExtensionAPI, provider = {stream
     ],
     streamSimple: stream,
   });
-  pi.registerCommand("muse-doctor", {description:"Local Muse version, recipe and telemetry diagnostic (no model/account request)",handler:async(_args,ctx)=>{ctx.ui.notify(await museDoctor(ctx.model?.id),"info");}});
+  pi.registerCommand("muse-doctor", {description:"Local Muse version, recipe and telemetry diagnostic (no model/account request)",handler:async(_args,ctx)=>{ctx.ui.notify(JSON.stringify({...JSON.parse(await museDoctor(ctx.model?.id)),catalogue:catalogueDiagnostics},null,2),"info");}});
   pi.on("session_start", async (_event, ctx) => {
     setQuotaListener(payload=>ctx.ui.setStatus("muse-rate-limit",quotaStatusLine(payload)));
     setRetryStatusListener(status=>ctx.ui.setStatus("muse-retry",status));

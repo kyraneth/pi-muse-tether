@@ -22,17 +22,33 @@ it.each([0,Math.floor(pi.length/2),pi.length-1,firstSpan-1,firstSpan+4,spanStart
  expect(()=>check(text)).toThrow(/redaction/);
 });
 it.each([
- ["left ordinary right","left [REDACTED][REDACTED] right"],
  ["left  right","left [REDACTED] right"],
  ["left multi\nline right","left [REDACTED] right"],
  ["left [REDACTED] right","left [REDACTED][REDACTED] right"],
  ["left x right y right z end","left [REDACTED] right [REDACTED] end"],
- ["gone right","[REDACTED] right"],
- ["left gone","left [REDACTED]"],
- ["password: sk-xyz\n","password: [REDACTED]\n"],
- ["before\nsk-xyz right","before\n[REDACTED] right"],
 ])("rejects nonqualifying/ambiguous marker %j -> %j",(text,visibleOutput)=>{
  expect(()=>check(text,{status:"completed",visibleOutput})).toThrow(/redaction/);
+});
+it.each([
+ ["gone right","[REDACTED] right"],
+ ["left gone","left [REDACTED]"],
+ ["password: synthetic-value\n","password: [REDACTED]\n"],
+ ["before\nsynthetic right","before\n[REDACTED] right"],
+ ["whole synthetic line","[REDACTED]"],
+ ["left synthetic-one synthetic-two right","left [REDACTED][REDACTED] right"],
+])("accepts declared-lossy unique line-edge redaction %j -> %j",(text,visibleOutput)=>{
+ const spans:any[]=[];
+ expect(toolResultReceipt({status:"completed",visibleOutput},{content:[{type:"text",text}],isError:false},undefined,s=>spans.push(...s))).toEqual({content:[{type:"text",text}],isError:false});
+ expect(spans).toHaveLength(1);
+});
+it.each([
+ ["aSECRET[REDACTED]z","a[REDACTED][REDACTED]z",1,6],
+ ["a[REDACTED]SECRETz","a[REDACTED][REDACTED]z",11,6],
+ ["aXz","a[REDACTED][REDACTED]z",1,1],
+])("keeps literal markers exact beside adjacent declared loss %j",(text,visibleOutput,offset,length)=>{
+ const spans:any[]=[];
+ expect(toolResultReceipt({status:"completed",visibleOutput},{content:[{type:"text",text}],isError:false},undefined,s=>spans.push(...s))).toEqual({content:[{type:"text",text}],isError:false});
+ expect(spans).toHaveLength(1);expect(spans[0].piOffsetBytes).toBe(offset);expect(spans[0].piByteLen).toBe(length);
 });
 it("accepts longer uniquely aligned spans without suffix rescanning",()=>{
  const text="left x right x right";

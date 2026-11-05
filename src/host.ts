@@ -55,7 +55,7 @@ export interface MuseHostOptions {
   /** Stop an opening host when its Pi binding is retired. */
   signal?: AbortSignal;
   /**
-   * Required to allow anything. Must validate schema/args and reserve the exact
+   * Required to allow anything. Must validate identity and reserve the exact
    * generation, session, turn, approvalId, toolCallId and rawArgs for the later
    * broker request. A true answer is permission to reach the proxy, NOT execute.
    * Synchronous by design: no stale requirement can wait on human interaction.
@@ -76,12 +76,21 @@ export function policyDenial(error: unknown, seen=new Set<unknown>()): boolean {
   const value = error as Record<string, unknown>;
   if ([value.status, value.httpStatus, value.statusCode, value.code].includes(403) ||
     value.kind === "client_attestation_denied" || value.code === "client_attestation_denied") return true;
-  if (value.quota !== undefined || value.requestDenied === true) return true;
-  // SDK errorKind is an open string, not a closed enum. Refusals always win.
+  // SDK errorKind is an open string. Only account/policy refusals latch;
+  // quota and rate limits fence the current binding without poisoning later hosts.
   if ([value.errorKind, value.kind, value.code].some(v => typeof v === "string" &&
-    /auth|attestation|policy|quota|plan.*limit|rate.?limit|permission|forbidden/i.test(v))) return true;
+    /auth|attestation|policy|permission|forbidden/i.test(v))) return true;
   if (typeof value.message === "string" && /\bHTTP\s+403\b|\bclient_attestation_denied\b/.test(value.message)) return true;
   return [value.data, value.error, value.cause].some((nested) => nested !== error && policyDenial(nested, seen));
+}
+
+function quotaDenial(error: unknown, seen = new Set<unknown>()): boolean {
+  if (!error || typeof error !== "object" || seen.has(error)) return false;
+  seen.add(error);
+  const value = error as Record<string, unknown>;
+  if ([value.status, value.httpStatus, value.statusCode, value.code].includes(429) || value.quota !== undefined ||
+      [value.errorKind, value.kind, value.code].some(v => typeof v === "string" && /quota|plan.*limit|rate.?limit/i.test(v))) return true;
+  return [value.data, value.error, value.cause].some(nested => quotaDenial(nested, seen));
 }
 
 const canonical = (v:any):string => v && typeof v === "object"
@@ -250,7 +259,7 @@ export class MuseHost {
         const waiting=this.#options.waitForToolReceipt?.();
         if(waiting)await waiting;
         // Refuse invalid/foreign requests immediately, without waiting for a Pi
-        // result that must never exist. Reserve exact valid args before holding.
+        // result that must never exist. Reserve exact args before holding.
         const decision=this.#decide(request);
         if(decision.choiceId!=="allow_once")return decision;
         const result=this.#options.waitForPiToolResult?.(request);
@@ -334,6 +343,10 @@ export class MuseHost {
     if(policyDenial(params.error) || (["turn/retryScheduled","turn/modelRetryScheduled"].includes(frame.method) && policyDenial(params))){
       this.#emit({kind:"frame",frame});
       this.#refusal(policyDenial(params.error) ? params.error : params);return;
+    }
+    if (quotaDenial(params.error) || (retry && quotaDenial(params))) {
+      this.#emit({kind:"frame",frame});
+      this.fence("Muse quota refused; no replay"); return;
     }
     if(retry){
       if(!this.#busy || params.turnId!==this.#submission?.turnId) {
@@ -451,12 +464,14 @@ export class MuseHost {
     if (this.#busy) throw new Error("Muse predecessor has no turn/completed terminal");
     await this.#options.verifyLogin?.();
     if (!this.#options.echo) {
-      const result = await this.connection.request("usage/read", {}).catch(error=>{this.#refusal(error);throw error;});
+      const result = await this.connection.request("usage/read", {}).catch(error=>{if(!this.#refusal(error) && quotaDenial(error))this.fence("Muse quota refused; no replay");throw error;});
       const usage = result.usage as any;
       publishQuota(usage); this.ledger.quota(usage);
       // Muse reports percentages; 100% is the provider's exhausted plan boundary.
-      if (quotaExhausted(usage))
+      if (quotaExhausted(usage)) {
+        this.fence("Muse plan usage limit reached; no turn submitted");
         throw new Error("Muse plan usage limit reached; no turn submitted");
+      }
     }
     const commandId = this.connection.mintCommandId();
     const submission: Submission = { commandId, turnId: undefined, terminal: false, started: false };
@@ -491,10 +506,13 @@ export class MuseHost {
       this.#assertLive();
       return { turnId: ack.turnId, commandId };
     } catch (error) {
-      this.#retrySafe = !submission.started && submission.turnId===undefined && error instanceof MspError &&
+      this.#retrySafe = !policyDenial(error) && !quotaDenial(error) && !submission.started && submission.turnId===undefined && error instanceof MspError &&
         ((error.code===-32001 && error.kind==="overloaded") || (error.code===-32031 && error.kind==="backpressured"));
       this.#refusal(error);
-      this.fence(`${policyDenial(error) ? "Muse nonretryable provider refusal" : "Muse turn admission failed; no replay"}: ${error instanceof Error ? error.message : String(error)}`);
+      if (quotaDenial(error) && !policyDenial(error)) {
+        this.ledger.record("quota_refusal", {phase:"turn_admission"});
+        this.fence("Muse quota refused; no replay");
+      } else this.fence(`${policyDenial(error) ? "Muse nonretryable provider refusal" : "Muse turn admission failed; no replay"}: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
@@ -556,10 +574,13 @@ export async function discoverMuseCatalog() {
   await qualifyMuseVersion(launch.command,launch.env??{});
   const handshake = spawnMspConnection(launch);
   try {
-    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.1.0" },
+    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.1.1" },
       capabilities: { requestedCapabilities: ["sessionMcp"], userInputDialogs: false } });
     const catalog = await spawned.connection.request("model/list", {});
     return catalog as typeof catalog & {models:any[]};
+  } catch (error) {
+    if (policyDenial(error)) policyLatch="Muse nonretryable provider refusal latched; account-owner review required";
+    throw error;
   } finally { await handshake.close(); }
 }
 
@@ -588,7 +609,7 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
         const verify=await linkHostLogin(home,launch.env?.XDG_CONFIG_HOME??join(homedir(),".config"));
         verifyLogin=async()=>{
           const metadata=await verify();
-          if(metadata.realFileChanged)host?.ledger.record("auth_metadata_refresh",{metadata});
+          if(metadata.realMetadataChanged)host?.ledger.record("auth_metadata_change",{metadata});
           options.onEvent?.({kind:"auth-metadata",metadata});
           return metadata;
         };
@@ -615,7 +636,7 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
     return {};
   });
   try {
-    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.1.0" },
+    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.1.1" },
       capabilities: { requestedCapabilities: ["sessionMcp",...(options.toolBatches?["rawLog"]:[])], userInputDialogs: false, ...((options.privatePrompt||options.toolBatches)?{experimentalApi:true}:{}) } });
     if(options.toolBatches && !spawned.initializeResult.grantedCapabilities.includes("rawLog"))throw new Error("Muse rawLog capability absent; parallel tools unsupported; no model request submitted");
     if (!options.echo) {

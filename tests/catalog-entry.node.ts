@@ -58,6 +58,7 @@ async function entry(catalog: any, modelId = "muse-spark-1.3", effort = "high") 
 }
 
 for (const [label, catalog] of [
+  ["discovery failure", { offlineFailure: true }],
   ["missing qualified model", { ...historical, models: historical.models.filter((m: any) => !m.modelId.startsWith("muse-spark")) }],
   ["missing Wonder", { ...historical, models: historical.models.filter((m: any) => m.modelId !== "muse-wonder-1.0") }],
   ["missing Wonder Full", { ...historical, models: historical.models.filter((m: any) => m.modelId !== "muse-wonder-full-1.0") }],
@@ -66,17 +67,24 @@ for (const [label, catalog] of [
   ["empty fallback", { ...historical, source: "bundledCatalog", models: [] }],
   ["bundled Spark is not a live catalogue", { ...historical, source: "bundledCatalog" }],
 ] as const) {
-  test("real Pi entry refuses " + label + " before custom-model fallback", async () => {
-    const result = await entry(catalog), diagnostics = result.stdout + result.stderr;
-    assert.notEqual(result.code, 0);
-    assert.match(diagnostics, /Muse catalogue/);
-    assert.ok(diagnostics.includes(catalog.source), diagnostics);
-    assert.ok(diagnostics.includes(catalog.providerId), diagnostics);
-    assert.ok(diagnostics.includes(catalog.profileId), diagnostics);
-    assert.doesNotMatch(diagnostics, /Using custom model id/);
-    assert.equal(result.replies.some(x => x.id === "state"), false, "no session with an echo-cloned Spark placeholder");
+  test("real Pi entry retains echo for " + label, async () => {
+    const result = await entry(catalog, "echo", "off");
+    assert.equal(result.code, 0, result.stderr);
+    const state = result.replies.find(x => x.id === "state");
+    assert.equal(state?.success, true);
+    assert.equal(state.data.model.id, "echo");
+    assert.equal(state.data.model.provider, "pi-muse-tether");
+    assert.doesNotMatch(result.stdout + result.stderr, /Using custom model id/);
   });
 }
+
+test("real Pi entry registers Spark from a partial provider catalogue", async () => {
+  const result = await entry({...historical, models:[spark]});
+  assert.equal(result.code, 0, result.stderr);
+  const state = result.replies.find(x => x.id === "state");
+  assert.equal(state?.data.model.id, spark.modelId);
+  assert.doesNotMatch(result.stdout + result.stderr, /Using custom model id/);
+});
 
 test("real Pi entry registers historical Spark metadata without a model request", async () => {
   const result = await entry(historical);

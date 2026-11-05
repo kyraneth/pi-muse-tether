@@ -1,0 +1,1005 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ordinary result"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "empty-content",
+      "result": {
+        "content": []
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "empty-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": ""
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "multipart-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "first"
+          },
+          {
+            "type": "text",
+            "text": "second"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "trailing-empty-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "first"
+          },
+          {
+            "type": "text",
+            "text": ""
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "leading-empty-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": ""
+          },
+          {
+            "type": "text",
+            "text": "second"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "leading-lf",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\nactual leading newline"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "crlf",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "first\r\nsecond\r\n"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "unicode",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "مرحبا café 🧭\u0000end"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "literal-placeholder",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[MCP image content: image/png, 4 bytes]"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "literal-redaction",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "literal [REDACTED] remains literal"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "error-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ordinary tool failure"
+          }
+        ],
+        "isError": true
+      },
+      "acceptance": "exact",
+      "tags": [
+        "error",
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "error-empty",
+      "result": {
+        "content": [],
+        "isError": true
+      },
+      "acceptance": "exact",
+      "tags": [
+        "error",
+        "empty"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "explicit-success",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "isError": false
+      },
+      "acceptance": "exact",
+      "tags": [
+        "text"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "png-only",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "png"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "png-with-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "png"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "png-first",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          },
+          {
+            "type": "text",
+            "text": "after"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "png"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "jpeg-only",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "jpeg"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "jpeg-with-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "jpeg"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "jpeg-first",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+          },
+          {
+            "type": "text",
+            "text": "after"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "jpeg"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "gif-only",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/gif",
+            "data": "R0lGODdhAgACAIEAAP8AAAAAAAAAAAAAACwAAAAAAgACAAAIBgABCAQQEAA7"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "gif"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "gif-with-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/gif",
+            "data": "R0lGODdhAgACAIEAAP8AAAAAAAAAAAAAACwAAAAAAgACAAAIBgABCAQQEAA7"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "gif"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "gif-first",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/gif",
+            "data": "R0lGODdhAgACAIEAAP8AAAAAAAAAAAAAACwAAAAAAgACAAAIBgABCAQQEAA7"
+          },
+          {
+            "type": "text",
+            "text": "after"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "gif"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "webp-only",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/webp",
+            "data": "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA="
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "webp"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "webp-with-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/webp",
+            "data": "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA="
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "webp"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "webp-first",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/webp",
+            "data": "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA="
+          },
+          {
+            "type": "text",
+            "text": "after"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "webp"
+      ],
+      "obligation": "Qualify actual pixels through the vendor; a placeholder alone is non-exact evidence."
+    },
+    {
+      "id": "multiple-images",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          },
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "multiple"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "interleaved-images",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          },
+          {
+            "type": "text",
+            "text": "between"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+          },
+          {
+            "type": "text",
+            "text": "after"
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "interleaved"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "image-empty-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": ""
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          },
+          {
+            "type": "text",
+            "text": ""
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "empty"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "error-image",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "failed with screenshot"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+          }
+        ],
+        "isError": true
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "error"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag."
+    },
+    {
+      "id": "derivative-image",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "acceptance": "vendor-qualified",
+      "tags": [
+        "image",
+        "derivative"
+      ],
+      "obligation": "Only a qualified vendor derivative rule may accept; never label exact.",
+      "observed": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+          }
+        ]
+      }
+    },
+    {
+      "id": "image-placeholder",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "acceptance": "declared-lossy",
+      "tags": [
+        "image",
+        "placeholder"
+      ],
+      "obligation": "Adapter constructs its own native placeholder; verify text positionally, declare image uncertainty.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before\n[MCP image content: image/png, placeholder]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redaction-middle",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "left synthetic-value right"
+          }
+        ]
+      },
+      "acceptance": "declared-lossy",
+      "tags": [
+        "redaction"
+      ],
+      "obligation": "Only named vendor redaction may be lossy; disclose it and never claim exact consumption.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "left [REDACTED] right"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redaction-start",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "synthetic-value right"
+          }
+        ]
+      },
+      "acceptance": "declared-lossy",
+      "tags": [
+        "redaction"
+      ],
+      "obligation": "Only named vendor redaction may be lossy; disclose it and never claim exact consumption.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[REDACTED] right"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redaction-end",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "left synthetic-value"
+          }
+        ]
+      },
+      "acceptance": "declared-lossy",
+      "tags": [
+        "redaction"
+      ],
+      "obligation": "Only named vendor redaction may be lossy; disclose it and never claim exact consumption.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "left [REDACTED]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redaction-whole",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "synthetic-value"
+          }
+        ]
+      },
+      "acceptance": "declared-lossy",
+      "tags": [
+        "redaction"
+      ],
+      "obligation": "Only named vendor redaction may be lossy; disclose it and never claim exact consumption.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[REDACTED]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redaction-line",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before\nsynthetic-value\nafter"
+          }
+        ]
+      },
+      "acceptance": "declared-lossy",
+      "tags": [
+        "redaction"
+      ],
+      "obligation": "Only named vendor redaction may be lossy; disclose it and never claim exact consumption.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before\n[REDACTED]\nafter"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redaction-adjacent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "left synthetic-one synthetic-two right"
+          }
+        ]
+      },
+      "acceptance": "declared-lossy",
+      "tags": [
+        "redaction"
+      ],
+      "obligation": "Only named vendor redaction may be lossy; disclose it and never claim exact consumption.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "left [REDACTED][REDACTED] right"
+          }
+        ]
+      }
+    },
+    {
+      "id": "wrong-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "expected"
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "mismatch"
+      ],
+      "obligation": "Genuine non-redaction text mismatch must fence; never repeat a journaled tool.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "unexpected"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dropped-leading-lf",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\nactual leading newline"
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "mismatch"
+      ],
+      "obligation": "Genuine non-redaction text mismatch must fence; never repeat a journaled tool.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "actual leading newline"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dropped-literal-placeholder",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "literal [MCP image content: image/png, 4 bytes] suffix"
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "mismatch"
+      ],
+      "obligation": "Genuine non-redaction text mismatch must fence; never repeat a journaled tool.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "literal  suffix"
+          }
+        ]
+      }
+    },
+    {
+      "id": "truncated-output",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "first\nsecond\nlast"
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "mismatch"
+      ],
+      "obligation": "Genuine non-redaction text mismatch must fence; never repeat a journaled tool.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "first"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redaction-plus-wrong-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "left synthetic-value right"
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "mismatch"
+      ],
+      "obligation": "Genuine non-redaction text mismatch must fence; never repeat a journaled tool.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "changed [REDACTED] right"
+          }
+        ]
+      }
+    },
+    {
+      "id": "wrong-error-flag",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "failed"
+          }
+        ],
+        "isError": true
+      },
+      "acceptance": "reject",
+      "tags": [
+        "mismatch",
+        "error"
+      ],
+      "obligation": "Preserve every text byte, part order and error flag.",
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "failed"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "id": "stored-output-paging",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "synthetic page line 0\nsynthetic page line 1\nsynthetic page line 2\nsynthetic page line 3\nsynthetic page line 4\nsynthetic page line 5\nsynthetic page line 6\nsynthetic page line 7\nsynthetic page line 8\nsynthetic page line 9\nsynthetic page line 10\nsynthetic page line 11\nsynthetic page line 12\nsynthetic page line 13\nsynthetic page line 14\nsynthetic page line 15\nsynthetic page line 16\nsynthetic page line 17\nsynthetic page line 18\nsynthetic page line 19\nsynthetic page line 20\nsynthetic page line 21\nsynthetic page line 22\nsynthetic page line 23\nsynthetic page line 24\nsynthetic page line 25\nsynthetic page line 26\nsynthetic page line 27\nsynthetic page line 28\nsynthetic page line 29\nsynthetic page line 30\nsynthetic page line 31\nsynthetic page line 32\nsynthetic page line 33\nsynthetic page line 34\nsynthetic page line 35\nsynthetic page line 36\nsynthetic page line 37\nsynthetic page line 38\nsynthetic page line 39\nsynthetic page line 40\nsynthetic page line 41\nsynthetic page line 42\nsynthetic page line 43\nsynthetic page line 44\nsynthetic page line 45\nsynthetic page line 46\nsynthetic page line 47\nsynthetic page line 48\nsynthetic page line 49\nsynthetic page line 50\nsynthetic page line 51\nsynthetic page line 52\nsynthetic page line 53\nsynthetic page line 54\nsynthetic page line 55\nsynthetic page line 56\nsynthetic page line 57\nsynthetic page line 58\nsynthetic page line 59\nsynthetic page line 60\nsynthetic page line 61\nsynthetic page line 62\nsynthetic page line 63\nsynthetic page line 64\nsynthetic page line 65\nsynthetic page line 66\nsynthetic page line 67\nsynthetic page line 68\nsynthetic page line 69\nsynthetic page line 70\nsynthetic page line 71\nsynthetic page line 72\nsynthetic page line 73\nsynthetic page line 74\nsynthetic page line 75\nsynthetic page line 76\nsynthetic page line 77\nsynthetic page line 78\nsynthetic page line 79\nsynthetic page line 80\nsynthetic page line 81\nsynthetic page line 82\nsynthetic page line 83\nsynthetic page line 84\nsynthetic page line 85\nsynthetic page line 86\nsynthetic page line 87\nsynthetic page line 88\nsynthetic page line 89\nsynthetic page line 90\nsynthetic page line 91\nsynthetic page line 92\nsynthetic page line 93\nsynthetic page line 94\nsynthetic page line 95\nsynthetic page line 96\nsynthetic page line 97\nsynthetic page line 98\nsynthetic page line 99\nsynthetic page line 100\nsynthetic page line 101\nsynthetic page line 102\nsynthetic page line 103\nsynthetic page line 104\nsynthetic page line 105\nsynthetic page line 106\nsynthetic page line 107\nsynthetic page line 108\nsynthetic page line 109\nsynthetic page line 110\nsynthetic page line 111\nsynthetic page line 112\nsynthetic page line 113\nsynthetic page line 114\nsynthetic page line 115\nsynthetic page line 116\nsynthetic page line 117\nsynthetic page line 118\nsynthetic page line 119\nsynthetic page line 120\nsynthetic page line 121\nsynthetic page line 122\nsynthetic page line 123\nsynthetic page line 124\nsynthetic page line 125\nsynthetic page line 126\nsynthetic page line 127\nsynthetic page line 128\nsynthetic page line 129\nsynthetic page line 130\nsynthetic page line 131\nsynthetic page line 132\nsynthetic page line 133\nsynthetic page line 134\nsynthetic page line 135\nsynthetic page line 136\nsynthetic page line 137\nsynthetic page line 138\nsynthetic page line 139\nsynthetic page line 140\nsynthetic page line 141\nsynthetic page line 142\nsynthetic page line 143\nsynthetic page line 144\nsynthetic page line 145\nsynthetic page line 146\nsynthetic page line 147\nsynthetic page line 148\nsynthetic page line 149\nsynthetic page line 150\nsynthetic page line 151\nsynthetic page line 152\nsynthetic page line 153\nsynthetic page line 154\nsynthetic page line 155\nsynthetic page line 156\nsynthetic page line 157\nsynthetic page line 158\nsynthetic page line 159\nsynthetic page line 160\nsynthetic page line 161\nsynthetic page line 162\nsynthetic page line 163\nsynthetic page line 164\nsynthetic page line 165\nsynthetic page line 166\nsynthetic page line 167\nsynthetic page line 168\nsynthetic page line 169\nsynthetic page line 170\nsynthetic page line 171\nsynthetic page line 172\nsynthetic page line 173\nsynthetic page line 174\nsynthetic page line 175\nsynthetic page line 176\nsynthetic page line 177\nsynthetic page line 178\nsynthetic page line 179\nsynthetic page line 180\nsynthetic page line 181\nsynthetic page line 182\nsynthetic page line 183\nsynthetic page line 184\nsynthetic page line 185\nsynthetic page line 186\nsynthetic page line 187\nsynthetic page line 188\nsynthetic page line 189\nsynthetic page line 190\nsynthetic page line 191\nsynthetic page line 192\nsynthetic page line 193\nsynthetic page line 194\nsynthetic page line 195\nsynthetic page line 196\nsynthetic page line 197\nsynthetic page line 198\nsynthetic page line 199\nsynthetic page line 200\nsynthetic page line 201\nsynthetic page line 202\nsynthetic page line 203\nsynthetic page line 204\nsynthetic page line 205\nsynthetic page line 206\nsynthetic page line 207\nsynthetic page line 208\nsynthetic page line 209\nsynthetic page line 210\nsynthetic page line 211\nsynthetic page line 212\nsynthetic page line 213\nsynthetic page line 214\nsynthetic page line 215\nsynthetic page line 216\nsynthetic page line 217\nsynthetic page line 218\nsynthetic page line 219\nsynthetic page line 220\nsynthetic page line 221\nsynthetic page line 222\nsynthetic page line 223\nsynthetic page line 224\nsynthetic page line 225\nsynthetic page line 226\nsynthetic page line 227\nsynthetic page line 228\nsynthetic page line 229\nsynthetic page line 230\nsynthetic page line 231\nsynthetic page line 232\nsynthetic page line 233\nsynthetic page line 234\nsynthetic page line 235\nsynthetic page line 236\nsynthetic page line 237\nsynthetic page line 238\nsynthetic page line 239\nsynthetic page line 240\nsynthetic page line 241\nsynthetic page line 242\nsynthetic page line 243\nsynthetic page line 244\nsynthetic page line 245\nsynthetic page line 246\nsynthetic page line 247\nsynthetic page line 248\nsynthetic page line 249\nsynthetic page line 250\nsynthetic page line 251\nsynthetic page line 252\nsynthetic page line 253\nsynthetic page line 254\nsynthetic page line 255\nsynthetic page line 256\nsynthetic page line 257\nsynthetic page line 258\nsynthetic page line 259\nsynthetic page line 260\nsynthetic page line 261\nsynthetic page line 262\nsynthetic page line 263\nsynthetic page line 264\nsynthetic page line 265\nsynthetic page line 266\nsynthetic page line 267\nsynthetic page line 268\nsynthetic page line 269\nsynthetic page line 270\nsynthetic page line 271\nsynthetic page line 272\nsynthetic page line 273\nsynthetic page line 274\nsynthetic page line 275\nsynthetic page line 276\nsynthetic page line 277\nsynthetic page line 278\nsynthetic page line 279\nsynthetic page line 280\nsynthetic page line 281\nsynthetic page line 282\nsynthetic page line 283\nsynthetic page line 284\nsynthetic page line 285\nsynthetic page line 286\nsynthetic page line 287\nsynthetic page line 288\nsynthetic page line 289\nsynthetic page line 290\nsynthetic page line 291\nsynthetic page line 292\nsynthetic page line 293\nsynthetic page line 294\nsynthetic page line 295\nsynthetic page line 296\nsynthetic page line 297\nsynthetic page line 298\nsynthetic page line 299\nsynthetic page line 300\nsynthetic page line 301\nsynthetic page line 302\nsynthetic page line 303\nsynthetic page line 304\nsynthetic page line 305\nsynthetic page line 306\nsynthetic page line 307\nsynthetic page line 308\nsynthetic page line 309\nsynthetic page line 310\nsynthetic page line 311\nsynthetic page line 312\nsynthetic page line 313\nsynthetic page line 314\nsynthetic page line 315\nsynthetic page line 316\nsynthetic page line 317\nsynthetic page line 318\nsynthetic page line 319\nsynthetic page line 320\nsynthetic page line 321\nsynthetic page line 322\nsynthetic page line 323\nsynthetic page line 324\nsynthetic page line 325\nsynthetic page line 326\nsynthetic page line 327\nsynthetic page line 328\nsynthetic page line 329\nsynthetic page line 330\nsynthetic page line 331\nsynthetic page line 332\nsynthetic page line 333\nsynthetic page line 334\nsynthetic page line 335\nsynthetic page line 336\nsynthetic page line 337\nsynthetic page line 338\nsynthetic page line 339\nsynthetic page line 340\nsynthetic page line 341\nsynthetic page line 342\nsynthetic page line 343\nsynthetic page line 344\nsynthetic page line 345\nsynthetic page line 346\nsynthetic page line 347\nsynthetic page line 348\nsynthetic page line 349\nsynthetic page line 350\nsynthetic page line 351\nsynthetic page line 352\nsynthetic page line 353\nsynthetic page line 354\nsynthetic page line 355\nsynthetic page line 356\nsynthetic page line 357\nsynthetic page line 358\nsynthetic page line 359\nsynthetic page line 360\nsynthetic page line 361\nsynthetic page line 362\nsynthetic page line 363\nsynthetic page line 364\nsynthetic page line 365\nsynthetic page line 366\nsynthetic page line 367\nsynthetic page line 368\nsynthetic page line 369\nsynthetic page line 370\nsynthetic page line 371\nsynthetic page line 372\nsynthetic page line 373\nsynthetic page line 374\nsynthetic page line 375\nsynthetic page line 376\nsynthetic page line 377\nsynthetic page line 378\nsynthetic page line 379\nsynthetic page line 380\nsynthetic page line 381\nsynthetic page line 382\nsynthetic page line 383\nsynthetic page line 384\nsynthetic page line 385\nsynthetic page line 386\nsynthetic page line 387\nsynthetic page line 388\nsynthetic page line 389\nsynthetic page line 390\nsynthetic page line 391\nsynthetic page line 392\nsynthetic page line 393\nsynthetic page line 394\nsynthetic page line 395\nsynthetic page line 396\nsynthetic page line 397\nsynthetic page line 398\nsynthetic page line 399\nsynthetic page line 400\nsynthetic page line 401\nsynthetic page line 402\nsynthetic page line 403\nsynthetic page line 404\nsynthetic page line 405\nsynthetic page line 406\nsynthetic page line 407\nsynthetic page line 408\nsynthetic page line 409\nsynthetic page line 410\nsynthetic page line 411\nsynthetic page line 412\nsynthetic page line 413\nsynthetic page line 414\nsynthetic page line 415\nsynthetic page line 416\nsynthetic page line 417\nsynthetic page line 418\nsynthetic page line 419\nsynthetic page line 420\nsynthetic page line 421\nsynthetic page line 422\nsynthetic page line 423\nsynthetic page line 424\nsynthetic page line 425\nsynthetic page line 426\nsynthetic page line 427\nsynthetic page line 428\nsynthetic page line 429\nsynthetic page line 430\nsynthetic page line 431\nsynthetic page line 432\nsynthetic page line 433\nsynthetic page line 434\nsynthetic page line 435\nsynthetic page line 436\nsynthetic page line 437\nsynthetic page line 438\nsynthetic page line 439\nsynthetic page line 440\nsynthetic page line 441\nsynthetic page line 442\nsynthetic page line 443\nsynthetic page line 444\nsynthetic page line 445\nsynthetic page line 446\nsynthetic page line 447\nsynthetic page line 448\nsynthetic page line 449\nsynthetic page line 450\nsynthetic page line 451\nsynthetic page line 452\nsynthetic page line 453\nsynthetic page line 454\nsynthetic page line 455\nsynthetic page line 456\nsynthetic page line 457\nsynthetic page line 458\nsynthetic page line 459\nsynthetic page line 460\nsynthetic page line 461\nsynthetic page line 462\nsynthetic page line 463\nsynthetic page line 464\nsynthetic page line 465\nsynthetic page line 466\nsynthetic page line 467\nsynthetic page line 468\nsynthetic page line 469\nsynthetic page line 470\nsynthetic page line 471\nsynthetic page line 472\nsynthetic page line 473\nsynthetic page line 474\nsynthetic page line 475\nsynthetic page line 476\nsynthetic page line 477\nsynthetic page line 478\nsynthetic page line 479\nsynthetic page line 480\nsynthetic page line 481\nsynthetic page line 482\nsynthetic page line 483\nsynthetic page line 484\nsynthetic page line 485\nsynthetic page line 486\nsynthetic page line 487\nsynthetic page line 488\nsynthetic page line 489\nsynthetic page line 490\nsynthetic page line 491\nsynthetic page line 492\nsynthetic page line 493\nsynthetic page line 494\nsynthetic page line 495\nsynthetic page line 496\nsynthetic page line 497\nsynthetic page line 498\nsynthetic page line 499\nsynthetic page line 500\nsynthetic page line 501\nsynthetic page line 502\nsynthetic page line 503\nsynthetic page line 504\nsynthetic page line 505\nsynthetic page line 506\nsynthetic page line 507\nsynthetic page line 508\nsynthetic page line 509\nsynthetic page line 510\nsynthetic page line 511\nsynthetic page line 512\nsynthetic page line 513\nsynthetic page line 514\nsynthetic page line 515\nsynthetic page line 516\nsynthetic page line 517\nsynthetic page line 518\nsynthetic page line 519\nsynthetic page line 520\nsynthetic page line 521\nsynthetic page line 522\nsynthetic page line 523\nsynthetic page line 524\nsynthetic page line 525\nsynthetic page line 526\nsynthetic page line 527\nsynthetic page line 528\nsynthetic page line 529\nsynthetic page line 530\nsynthetic page line 531\nsynthetic page line 532\nsynthetic page line 533\nsynthetic page line 534\nsynthetic page line 535\nsynthetic page line 536\nsynthetic page line 537\nsynthetic page line 538\nsynthetic page line 539\nsynthetic page line 540\nsynthetic page line 541\nsynthetic page line 542\nsynthetic page line 543\nsynthetic page line 544\nsynthetic page line 545\nsynthetic page line 546\nsynthetic page line 547\nsynthetic page line 548\nsynthetic page line 549\nsynthetic page line 550\nsynthetic page line 551\nsynthetic page line 552\nsynthetic page line 553\nsynthetic page line 554\nsynthetic page line 555\nsynthetic page line 556\nsynthetic page line 557\nsynthetic page line 558\nsynthetic page line 559\nsynthetic page line 560\nsynthetic page line 561\nsynthetic page line 562\nsynthetic page line 563\nsynthetic page line 564\nsynthetic page line 565\nsynthetic page line 566\nsynthetic page line 567\nsynthetic page line 568\nsynthetic page line 569\nsynthetic page line 570\nsynthetic page line 571\nsynthetic page line 572\nsynthetic page line 573\nsynthetic page line 574\nsynthetic page line 575\nsynthetic page line 576\nsynthetic page line 577\nsynthetic page line 578\nsynthetic page line 579\nsynthetic page line 580\nsynthetic page line 581\nsynthetic page line 582\nsynthetic page line 583\nsynthetic page line 584\nsynthetic page line 585\nsynthetic page line 586\nsynthetic page line 587\nsynthetic page line 588\nsynthetic page line 589\nsynthetic page line 590\nsynthetic page line 591\nsynthetic page line 592\nsynthetic page line 593\nsynthetic page line 594\nsynthetic page line 595\nsynthetic page line 596\nsynthetic page line 597\nsynthetic page line 598\nsynthetic page line 599\nsynthetic page line 600\nsynthetic page line 601\nsynthetic page line 602\nsynthetic page line 603\nsynthetic page line 604\nsynthetic page line 605\nsynthetic page line 606\nsynthetic page line 607\nsynthetic page line 608\nsynthetic page line 609\nsynthetic page line 610\nsynthetic page line 611\nsynthetic page line 612\nsynthetic page line 613\nsynthetic page line 614\nsynthetic page line 615\nsynthetic page line 616\nsynthetic page line 617\nsynthetic page line 618\nsynthetic page line 619\nsynthetic page line 620\nsynthetic page line 621\nsynthetic page line 622\nsynthetic page line 623\nsynthetic page line 624\nsynthetic page line 625\nsynthetic page line 626\nsynthetic page line 627\nsynthetic page line 628\nsynthetic page line 629\nsynthetic page line 630\nsynthetic page line 631\nsynthetic page line 632\nsynthetic page line 633\nsynthetic page line 634\nsynthetic page line 635\nsynthetic page line 636\nsynthetic page line 637\nsynthetic page line 638\nsynthetic page line 639\nsynthetic page line 640\nsynthetic page line 641\nsynthetic page line 642\nsynthetic page line 643\nsynthetic page line 644\nsynthetic page line 645\nsynthetic page line 646\nsynthetic page line 647\nsynthetic page line 648\nsynthetic page line 649\nsynthetic page line 650\nsynthetic page line 651\nsynthetic page line 652\nsynthetic page line 653\nsynthetic page line 654\nsynthetic page line 655\nsynthetic page line 656\nsynthetic page line 657\nsynthetic page line 658\nsynthetic page line 659\nsynthetic page line 660\nsynthetic page line 661\nsynthetic page line 662\nsynthetic page line 663\nsynthetic page line 664\nsynthetic page line 665\nsynthetic page line 666\nsynthetic page line 667\nsynthetic page line 668\nsynthetic page line 669\nsynthetic page line 670\nsynthetic page line 671\nsynthetic page line 672\nsynthetic page line 673\nsynthetic page line 674\nsynthetic page line 675\nsynthetic page line 676\nsynthetic page line 677\nsynthetic page line 678\nsynthetic page line 679\nsynthetic page line 680\nsynthetic page line 681\nsynthetic page line 682\nsynthetic page line 683\nsynthetic page line 684\nsynthetic page line 685\nsynthetic page line 686\nsynthetic page line 687\nsynthetic page line 688\nsynthetic page line 689\nsynthetic page line 690\nsynthetic page line 691\nsynthetic page line 692\nsynthetic page line 693\nsynthetic page line 694\nsynthetic page line 695\nsynthetic page line 696\nsynthetic page line 697\nsynthetic page line 698\nsynthetic page line 699\nsynthetic page line 700\nsynthetic page line 701\nsynthetic page line 702\nsynthetic page line 703\nsynthetic page line 704\nsynthetic page line 705\nsynthetic page line 706\nsynthetic page line 707\nsynthetic page line 708\nsynthetic page line 709\nsynthetic page line 710\nsynthetic page line 711\nsynthetic page line 712\nsynthetic page line 713\nsynthetic page line 714\nsynthetic page line 715\nsynthetic page line 716\nsynthetic page line 717\nsynthetic page line 718\nsynthetic page line 719\nsynthetic page line 720\nsynthetic page line 721\nsynthetic page line 722\nsynthetic page line 723\nsynthetic page line 724\nsynthetic page line 725\nsynthetic page line 726\nsynthetic page line 727\nsynthetic page line 728\nsynthetic page line 729\nsynthetic page line 730\nsynthetic page line 731\nsynthetic page line 732\nsynthetic page line 733\nsynthetic page line 734\nsynthetic page line 735\nsynthetic page line 736\nsynthetic page line 737\nsynthetic page line 738\nsynthetic page line 739\nsynthetic page line 740\nsynthetic page line 741\nsynthetic page line 742\nsynthetic page line 743\nsynthetic page line 744\nsynthetic page line 745\nsynthetic page line 746\nsynthetic page line 747\nsynthetic page line 748\nsynthetic page line 749\nsynthetic page line 750\nsynthetic page line 751\nsynthetic page line 752\nsynthetic page line 753\nsynthetic page line 754\nsynthetic page line 755\nsynthetic page line 756\nsynthetic page line 757\nsynthetic page line 758\nsynthetic page line 759\nsynthetic page line 760\nsynthetic page line 761\nsynthetic page line 762\nsynthetic page line 763\nsynthetic page line 764\nsynthetic page line 765\nsynthetic page line 766\nsynthetic page line 767\nsynthetic page line 768\nsynthetic page line 769\nsynthetic page line 770\nsynthetic page line 771\nsynthetic page line 772\nsynthetic page line 773\nsynthetic page line 774\nsynthetic page line 775\nsynthetic page line 776\nsynthetic page line 777\nsynthetic page line 778\nsynthetic page line 779\nsynthetic page line 780\nsynthetic page line 781\nsynthetic page line 782\nsynthetic page line 783\nsynthetic page line 784\nsynthetic page line 785\nsynthetic page line 786\nsynthetic page line 787\nsynthetic page line 788\nsynthetic page line 789\nsynthetic page line 790\nsynthetic page line 791\nsynthetic page line 792\nsynthetic page line 793\nsynthetic page line 794\nsynthetic page line 795\nsynthetic page line 796\nsynthetic page line 797\nsynthetic page line 798\nsynthetic page line 799\nsynthetic page line 800\nsynthetic page line 801\nsynthetic page line 802\nsynthetic page line 803\nsynthetic page line 804\nsynthetic page line 805\nsynthetic page line 806\nsynthetic page line 807\nsynthetic page line 808\nsynthetic page line 809\nsynthetic page line 810\nsynthetic page line 811\nsynthetic page line 812\nsynthetic page line 813\nsynthetic page line 814\nsynthetic page line 815\nsynthetic page line 816\nsynthetic page line 817\nsynthetic page line 818\nsynthetic page line 819\nsynthetic page line 820\nsynthetic page line 821\nsynthetic page line 822\nsynthetic page line 823\nsynthetic page line 824\nsynthetic page line 825\nsynthetic page line 826\nsynthetic page line 827\nsynthetic page line 828\nsynthetic page line 829\nsynthetic page line 830\nsynthetic page line 831\nsynthetic page line 832\nsynthetic page line 833\nsynthetic page line 834\nsynthetic page line 835\nsynthetic page line 836\nsynthetic page line 837\nsynthetic page line 838\nsynthetic page line 839\nsynthetic page line 840\nsynthetic page line 841\nsynthetic page line 842\nsynthetic page line 843\nsynthetic page line 844\nsynthetic page line 845\nsynthetic page line 846\nsynthetic page line 847\nsynthetic page line 848\nsynthetic page line 849\nsynthetic page line 850\nsynthetic page line 851\nsynthetic page line 852\nsynthetic page line 853\nsynthetic page line 854\nsynthetic page line 855\nsynthetic page line 856\nsynthetic page line 857\nsynthetic page line 858\nsynthetic page line 859\nsynthetic page line 860\nsynthetic page line 861\nsynthetic page line 862\nsynthetic page line 863\nsynthetic page line 864\nsynthetic page line 865\nsynthetic page line 866\nsynthetic page line 867\nsynthetic page line 868\nsynthetic page line 869\nsynthetic page line 870\nsynthetic page line 871\nsynthetic page line 872\nsynthetic page line 873\nsynthetic page line 874\nsynthetic page line 875\nsynthetic page line 876\nsynthetic page line 877\nsynthetic page line 878\nsynthetic page line 879\nsynthetic page line 880\nsynthetic page line 881\nsynthetic page line 882\nsynthetic page line 883\nsynthetic page line 884\nsynthetic page line 885\nsynthetic page line 886\nsynthetic page line 887\nsynthetic page line 888\nsynthetic page line 889\nsynthetic page line 890\nsynthetic page line 891\nsynthetic page line 892\nsynthetic page line 893\nsynthetic page line 894\nsynthetic page line 895\nsynthetic page line 896\nsynthetic page line 897\nsynthetic page line 898\nsynthetic page line 899\nsynthetic page line 900\nsynthetic page line 901\nsynthetic page line 902\nsynthetic page line 903\nsynthetic page line 904\nsynthetic page line 905\nsynthetic page line 906\nsynthetic page line 907\nsynthetic page line 908\nsynthetic page line 909\nsynthetic page line 910\nsynthetic page line 911\nsynthetic page line 912\nsynthetic page line 913\nsynthetic page line 914\nsynthetic page line 915\nsynthetic page line 916\nsynthetic page line 917\nsynthetic page line 918\nsynthetic page line 919\nsynthetic page line 920\nsynthetic page line 921\nsynthetic page line 922\nsynthetic page line 923\nsynthetic page line 924\nsynthetic page line 925\nsynthetic page line 926\nsynthetic page line 927\nsynthetic page line 928\nsynthetic page line 929\nsynthetic page line 930\nsynthetic page line 931\nsynthetic page line 932\nsynthetic page line 933\nsynthetic page line 934\nsynthetic page line 935\nsynthetic page line 936\nsynthetic page line 937\nsynthetic page line 938\nsynthetic page line 939\nsynthetic page line 940\nsynthetic page line 941\nsynthetic page line 942\nsynthetic page line 943\nsynthetic page line 944\nsynthetic page line 945\nsynthetic page line 946\nsynthetic page line 947\nsynthetic page line 948\nsynthetic page line 949\nsynthetic page line 950\nsynthetic page line 951\nsynthetic page line 952\nsynthetic page line 953\nsynthetic page line 954\nsynthetic page line 955\nsynthetic page line 956\nsynthetic page line 957\nsynthetic page line 958\nsynthetic page line 959\nsynthetic page line 960\nsynthetic page line 961\nsynthetic page line 962\nsynthetic page line 963\nsynthetic page line 964\nsynthetic page line 965\nsynthetic page line 966\nsynthetic page line 967\nsynthetic page line 968\nsynthetic page line 969\nsynthetic page line 970\nsynthetic page line 971\nsynthetic page line 972\nsynthetic page line 973\nsynthetic page line 974\nsynthetic page line 975\nsynthetic page line 976\nsynthetic page line 977\nsynthetic page line 978\nsynthetic page line 979\nsynthetic page line 980\nsynthetic page line 981\nsynthetic page line 982\nsynthetic page line 983\nsynthetic page line 984\nsynthetic page line 985\nsynthetic page line 986\nsynthetic page line 987\nsynthetic page line 988\nsynthetic page line 989\nsynthetic page line 990\nsynthetic page line 991\nsynthetic page line 992\nsynthetic page line 993\nsynthetic page line 994\nsynthetic page line 995\nsynthetic page line 996\nsynthetic page line 997\nsynthetic page line 998\nsynthetic page line 999\nsynthetic page line 1000\nsynthetic page line 1001\nsynthetic page line 1002\nsynthetic page line 1003\nsynthetic page line 1004\nsynthetic page line 1005\nsynthetic page line 1006\nsynthetic page line 1007\nsynthetic page line 1008\nsynthetic page line 1009\nsynthetic page line 1010\nsynthetic page line 1011\nsynthetic page line 1012\nsynthetic page line 1013\nsynthetic page line 1014\nsynthetic page line 1015\nsynthetic page line 1016\nsynthetic page line 1017\nsynthetic page line 1018\nsynthetic page line 1019\nsynthetic page line 1020\nsynthetic page line 1021\nsynthetic page line 1022\nsynthetic page line 1023\nsynthetic page line 1024\nsynthetic page line 1025\nsynthetic page line 1026\nsynthetic page line 1027\nsynthetic page line 1028\nsynthetic page line 1029\nsynthetic page line 1030\nsynthetic page line 1031\nsynthetic page line 1032\nsynthetic page line 1033\nsynthetic page line 1034\nsynthetic page line 1035\nsynthetic page line 1036\nsynthetic page line 1037\nsynthetic page line 1038\nsynthetic page line 1039\nsynthetic page line 1040\nsynthetic page line 1041\nsynthetic page line 1042\nsynthetic page line 1043\nsynthetic page line 1044\nsynthetic page line 1045\nsynthetic page line 1046\nsynthetic page line 1047\nsynthetic page line 1048\nsynthetic page line 1049\nsynthetic page line 1050\nsynthetic page line 1051\nsynthetic page line 1052\nsynthetic page line 1053\nsynthetic page line 1054\nsynthetic page line 1055\nsynthetic page line 1056\nsynthetic page line 1057\nsynthetic page line 1058\nsynthetic page line 1059\nsynthetic page line 1060\nsynthetic page line 1061\nsynthetic page line 1062\nsynthetic page line 1063\nsynthetic page line 1064\nsynthetic page line 1065\nsynthetic page line 1066\nsynthetic page line 1067\nsynthetic page line 1068\nsynthetic page line 1069\nsynthetic page line 1070\nsynthetic page line 1071\nsynthetic page line 1072\nsynthetic page line 1073\nsynthetic page line 1074\nsynthetic page line 1075\nsynthetic page line 1076\nsynthetic page line 1077\nsynthetic page line 1078\nsynthetic page line 1079\nsynthetic page line 1080\nsynthetic page line 1081\nsynthetic page line 1082\nsynthetic page line 1083\nsynthetic page line 1084\nsynthetic page line 1085\nsynthetic page line 1086\nsynthetic page line 1087\nsynthetic page line 1088\nsynthetic page line 1089\nsynthetic page line 1090\nsynthetic page line 1091\nsynthetic page line 1092\nsynthetic page line 1093\nsynthetic page line 1094\nsynthetic page line 1095\nsynthetic page line 1096\nsynthetic page line 1097\nsynthetic page line 1098\nsynthetic page line 1099\nsynthetic page line 1100\nsynthetic page line 1101\nsynthetic page line 1102\nsynthetic page line 1103\nsynthetic page line 1104\nsynthetic page line 1105\nsynthetic page line 1106\nsynthetic page line 1107\nsynthetic page line 1108\nsynthetic page line 1109\nsynthetic page line 1110\nsynthetic page line 1111\nsynthetic page line 1112\nsynthetic page line 1113\nsynthetic page line 1114\nsynthetic page line 1115\nsynthetic page line 1116\nsynthetic page line 1117\nsynthetic page line 1118\nsynthetic page line 1119\nsynthetic page line 1120\nsynthetic page line 1121\nsynthetic page line 1122\nsynthetic page line 1123\nsynthetic page line 1124\nsynthetic page line 1125\nsynthetic page line 1126\nsynthetic page line 1127\nsynthetic page line 1128\nsynthetic page line 1129\nsynthetic page line 1130\nsynthetic page line 1131\nsynthetic page line 1132\nsynthetic page line 1133\nsynthetic page line 1134\nsynthetic page line 1135\nsynthetic page line 1136\nsynthetic page line 1137\nsynthetic page line 1138\nsynthetic page line 1139\nsynthetic page line 1140\nsynthetic page line 1141\nsynthetic page line 1142\nsynthetic page line 1143\nsynthetic page line 1144\nsynthetic page line 1145\nsynthetic page line 1146\nsynthetic page line 1147\nsynthetic page line 1148\nsynthetic page line 1149\nsynthetic page line 1150\nsynthetic page line 1151\nsynthetic page line 1152\nsynthetic page line 1153\nsynthetic page line 1154\nsynthetic page line 1155\nsynthetic page line 1156\nsynthetic page line 1157\nsynthetic page line 1158\nsynthetic page line 1159\nsynthetic page line 1160\nsynthetic page line 1161\nsynthetic page line 1162\nsynthetic page line 1163\nsynthetic page line 1164\nsynthetic page line 1165\nsynthetic page line 1166\nsynthetic page line 1167\nsynthetic page line 1168\nsynthetic page line 1169\nsynthetic page line 1170\nsynthetic page line 1171\nsynthetic page line 1172\nsynthetic page line 1173\nsynthetic page line 1174\nsynthetic page line 1175\nsynthetic page line 1176\nsynthetic page line 1177\nsynthetic page line 1178\nsynthetic page line 1179\nsynthetic page line 1180\nsynthetic page line 1181\nsynthetic page line 1182\nsynthetic page line 1183\nsynthetic page line 1184\nsynthetic page line 1185\nsynthetic page line 1186\nsynthetic page line 1187\nsynthetic page line 1188\nsynthetic page line 1189\nsynthetic page line 1190\nsynthetic page line 1191\nsynthetic page line 1192\nsynthetic page line 1193\nsynthetic page line 1194\nsynthetic page line 1195\nsynthetic page line 1196\nsynthetic page line 1197\nsynthetic page line 1198\nsynthetic page line 1199\nsynthetic page line 1200\nsynthetic page line 1201\nsynthetic page line 1202\nsynthetic page line 1203\nsynthetic page line 1204\nsynthetic page line 1205\nsynthetic page line 1206\nsynthetic page line 1207\nsynthetic page line 1208\nsynthetic page line 1209\nsynthetic page line 1210\nsynthetic page line 1211\nsynthetic page line 1212\nsynthetic page line 1213\nsynthetic page line 1214\nsynthetic page line 1215\nsynthetic page line 1216\nsynthetic page line 1217\nsynthetic page line 1218\nsynthetic page line 1219\nsynthetic page line 1220\nsynthetic page line 1221\nsynthetic page line 1222\nsynthetic page line 1223\nsynthetic page line 1224\nsynthetic page line 1225\nsynthetic page line 1226\nsynthetic page line 1227\nsynthetic page line 1228\nsynthetic page line 1229\nsynthetic page line 1230\nsynthetic page line 1231\nsynthetic page line 1232\nsynthetic page line 1233\nsynthetic page line 1234\nsynthetic page line 1235\nsynthetic page line 1236\nsynthetic page line 1237\nsynthetic page line 1238\nsynthetic page line 1239\nsynthetic page line 1240\nsynthetic page line 1241\nsynthetic page line 1242\nsynthetic page line 1243\nsynthetic page line 1244\nsynthetic page line 1245\nsynthetic page line 1246\nsynthetic page line 1247\nsynthetic page line 1248\nsynthetic page line 1249\nsynthetic page line 1250\nsynthetic page line 1251\nsynthetic page line 1252\nsynthetic page line 1253\nsynthetic page line 1254\nsynthetic page line 1255\nsynthetic page line 1256\nsynthetic page line 1257\nsynthetic page line 1258\nsynthetic page line 1259\nsynthetic page line 1260\nsynthetic page line 1261\nsynthetic page line 1262\nsynthetic page line 1263\nsynthetic page line 1264\nsynthetic page line 1265\nsynthetic page line 1266\nsynthetic page line 1267\nsynthetic page line 1268\nsynthetic page line 1269\nsynthetic page line 1270\nsynthetic page line 1271\nsynthetic page line 1272\nsynthetic page line 1273\nsynthetic page line 1274\nsynthetic page line 1275\nsynthetic page line 1276\nsynthetic page line 1277\nsynthetic page line 1278\nsynthetic page line 1279\nsynthetic page line 1280\nsynthetic page line 1281\nsynthetic page line 1282\nsynthetic page line 1283\nsynthetic page line 1284\nsynthetic page line 1285\nsynthetic page line 1286\nsynthetic page line 1287\nsynthetic page line 1288\nsynthetic page line 1289\nsynthetic page line 1290\nsynthetic page line 1291\nsynthetic page line 1292\nsynthetic page line 1293\nsynthetic page line 1294\nsynthetic page line 1295\nsynthetic page line 1296\nsynthetic page line 1297\nsynthetic page line 1298\nsynthetic page line 1299\nsynthetic page line 1300\nsynthetic page line 1301\nsynthetic page line 1302\nsynthetic page line 1303\nsynthetic page line 1304\nsynthetic page line 1305\nsynthetic page line 1306\nsynthetic page line 1307\nsynthetic page line 1308\nsynthetic page line 1309\nsynthetic page line 1310\nsynthetic page line 1311\nsynthetic page line 1312\nsynthetic page line 1313\nsynthetic page line 1314\nsynthetic page line 1315\nsynthetic page line 1316\nsynthetic page line 1317\nsynthetic page line 1318\nsynthetic page line 1319\nsynthetic page line 1320\nsynthetic page line 1321\nsynthetic page line 1322\nsynthetic page line 1323\nsynthetic page line 1324\nsynthetic page line 1325\nsynthetic page line 1326\nsynthetic page line 1327\nsynthetic page line 1328\nsynthetic page line 1329\nsynthetic page line 1330\nsynthetic page line 1331\nsynthetic page line 1332\nsynthetic page line 1333\nsynthetic page line 1334\nsynthetic page line 1335\nsynthetic page line 1336\nsynthetic page line 1337\nsynthetic page line 1338\nsynthetic page line 1339\nsynthetic page line 1340\nsynthetic page line 1341\nsynthetic page line 1342\nsynthetic page line 1343\nsynthetic page line 1344\nsynthetic page line 1345\nsynthetic page line 1346\nsynthetic page line 1347\nsynthetic page line 1348\nsynthetic page line 1349\nsynthetic page line 1350\nsynthetic page line 1351\nsynthetic page line 1352\nsynthetic page line 1353\nsynthetic page line 1354\nsynthetic page line 1355\nsynthetic page line 1356\nsynthetic page line 1357\nsynthetic page line 1358\nsynthetic page line 1359\nsynthetic page line 1360\nsynthetic page line 1361\nsynthetic page line 1362\nsynthetic page line 1363\nsynthetic page line 1364\nsynthetic page line 1365\nsynthetic page line 1366\nsynthetic page line 1367\nsynthetic page line 1368\nsynthetic page line 1369\nsynthetic page line 1370\nsynthetic page line 1371\nsynthetic page line 1372\nsynthetic page line 1373\nsynthetic page line 1374\nsynthetic page line 1375\nsynthetic page line 1376\nsynthetic page line 1377\nsynthetic page line 1378\nsynthetic page line 1379\nsynthetic page line 1380\nsynthetic page line 1381\nsynthetic page line 1382\nsynthetic page line 1383\nsynthetic page line 1384\nsynthetic page line 1385\nsynthetic page line 1386\nsynthetic page line 1387\nsynthetic page line 1388\nsynthetic page line 1389\nsynthetic page line 1390\nsynthetic page line 1391\nsynthetic page line 1392\nsynthetic page line 1393\nsynthetic page line 1394\nsynthetic page line 1395\nsynthetic page line 1396\nsynthetic page line 1397\nsynthetic page line 1398\nsynthetic page line 1399\nsynthetic page line 1400\nsynthetic page line 1401\nsynthetic page line 1402\nsynthetic page line 1403\nsynthetic page line 1404\nsynthetic page line 1405\nsynthetic page line 1406\nsynthetic page line 1407\nsynthetic page line 1408\nsynthetic page line 1409\nsynthetic page line 1410\nsynthetic page line 1411\nsynthetic page line 1412\nsynthetic page line 1413\nsynthetic page line 1414\nsynthetic page line 1415\nsynthetic page line 1416\nsynthetic page line 1417\nsynthetic page line 1418\nsynthetic page line 1419\nsynthetic page line 1420\nsynthetic page line 1421\nsynthetic page line 1422\nsynthetic page line 1423\nsynthetic page line 1424\nsynthetic page line 1425\nsynthetic page line 1426\nsynthetic page line 1427\nsynthetic page line 1428\nsynthetic page line 1429\nsynthetic page line 1430\nsynthetic page line 1431\nsynthetic page line 1432\nsynthetic page line 1433\nsynthetic page line 1434\nsynthetic page line 1435\nsynthetic page line 1436\nsynthetic page line 1437\nsynthetic page line 1438\nsynthetic page line 1439\nsynthetic page line 1440\nsynthetic page line 1441\nsynthetic page line 1442\nsynthetic page line 1443\nsynthetic page line 1444\nsynthetic page line 1445\nsynthetic page line 1446\nsynthetic page line 1447\nsynthetic page line 1448\nsynthetic page line 1449\nsynthetic page line 1450\nsynthetic page line 1451\nsynthetic page line 1452\nsynthetic page line 1453\nsynthetic page line 1454\nsynthetic page line 1455\nsynthetic page line 1456\nsynthetic page line 1457\nsynthetic page line 1458\nsynthetic page line 1459\nsynthetic page line 1460\nsynthetic page line 1461\nsynthetic page line 1462\nsynthetic page line 1463\nsynthetic page line 1464\nsynthetic page line 1465\nsynthetic page line 1466\nsynthetic page line 1467\nsynthetic page line 1468\nsynthetic page line 1469\nsynthetic page line 1470\nsynthetic page line 1471\nsynthetic page line 1472\nsynthetic page line 1473\nsynthetic page line 1474\nsynthetic page line 1475\nsynthetic page line 1476\nsynthetic page line 1477\nsynthetic page line 1478\nsynthetic page line 1479\nsynthetic page line 1480\nsynthetic page line 1481\nsynthetic page line 1482\nsynthetic page line 1483\nsynthetic page line 1484\nsynthetic page line 1485\nsynthetic page line 1486\nsynthetic page line 1487\nsynthetic page line 1488\nsynthetic page line 1489\nsynthetic page line 1490\nsynthetic page line 1491\nsynthetic page line 1492\nsynthetic page line 1493\nsynthetic page line 1494\nsynthetic page line 1495\nsynthetic page line 1496\nsynthetic page line 1497\nsynthetic page line 1498\nsynthetic page line 1499\nsynthetic page line 1500\nsynthetic page line 1501\nsynthetic page line 1502\nsynthetic page line 1503\nsynthetic page line 1504\nsynthetic page line 1505\nsynthetic page line 1506\nsynthetic page line 1507\nsynthetic page line 1508\nsynthetic page line 1509\nsynthetic page line 1510\nsynthetic page line 1511\nsynthetic page line 1512\nsynthetic page line 1513\nsynthetic page line 1514\nsynthetic page line 1515\nsynthetic page line 1516\nsynthetic page line 1517\nsynthetic page line 1518\nsynthetic page line 1519\nsynthetic page line 1520\nsynthetic page line 1521\nsynthetic page line 1522\nsynthetic page line 1523\nsynthetic page line 1524\nsynthetic page line 1525\nsynthetic page line 1526\nsynthetic page line 1527\nsynthetic page line 1528\nsynthetic page line 1529\nsynthetic page line 1530\nsynthetic page line 1531\nsynthetic page line 1532\nsynthetic page line 1533\nsynthetic page line 1534\nsynthetic page line 1535\nsynthetic page line 1536\nsynthetic page line 1537\nsynthetic page line 1538\nsynthetic page line 1539\nsynthetic page line 1540\nsynthetic page line 1541\nsynthetic page line 1542\nsynthetic page line 1543\nsynthetic page line 1544\nsynthetic page line 1545\nsynthetic page line 1546\nsynthetic page line 1547\nsynthetic page line 1548\nsynthetic page line 1549\nsynthetic page line 1550\nsynthetic page line 1551\nsynthetic page line 1552\nsynthetic page line 1553\nsynthetic page line 1554\nsynthetic page line 1555\nsynthetic page line 1556\nsynthetic page line 1557\nsynthetic page line 1558\nsynthetic page line 1559\nsynthetic page line 1560\nsynthetic page line 1561\nsynthetic page line 1562\nsynthetic page line 1563\nsynthetic page line 1564\nsynthetic page line 1565\nsynthetic page line 1566\nsynthetic page line 1567\nsynthetic page line 1568\nsynthetic page line 1569\nsynthetic page line 1570\nsynthetic page line 1571\nsynthetic page line 1572\nsynthetic page line 1573\nsynthetic page line 1574\nsynthetic page line 1575\nsynthetic page line 1576\nsynthetic page line 1577\nsynthetic page line 1578\nsynthetic page line 1579\nsynthetic page line 1580\nsynthetic page line 1581\nsynthetic page line 1582\nsynthetic page line 1583\nsynthetic page line 1584\nsynthetic page line 1585\nsynthetic page line 1586\nsynthetic page line 1587\nsynthetic page line 1588\nsynthetic page line 1589\nsynthetic page line 1590\nsynthetic page line 1591\nsynthetic page line 1592\nsynthetic page line 1593\nsynthetic page line 1594\nsynthetic page line 1595\nsynthetic page line 1596\nsynthetic page line 1597\nsynthetic page line 1598\nsynthetic page line 1599\nsynthetic page line 1600\nsynthetic page line 1601\nsynthetic page line 1602\nsynthetic page line 1603\nsynthetic page line 1604\nsynthetic page line 1605\nsynthetic page line 1606\nsynthetic page line 1607\nsynthetic page line 1608\nsynthetic page line 1609\nsynthetic page line 1610\nsynthetic page line 1611\nsynthetic page line 1612\nsynthetic page line 1613\nsynthetic page line 1614\nsynthetic page line 1615\nsynthetic page line 1616\nsynthetic page line 1617\nsynthetic page line 1618\nsynthetic page line 1619\nsynthetic page line 1620\nsynthetic page line 1621\nsynthetic page line 1622\nsynthetic page line 1623\nsynthetic page line 1624\nsynthetic page line 1625\nsynthetic page line 1626\nsynthetic page line 1627\nsynthetic page line 1628\nsynthetic page line 1629\nsynthetic page line 1630\nsynthetic page line 1631\nsynthetic page line 1632\nsynthetic page line 1633\nsynthetic page line 1634\nsynthetic page line 1635\nsynthetic page line 1636\nsynthetic page line 1637\nsynthetic page line 1638\nsynthetic page line 1639\nsynthetic page line 1640\nsynthetic page line 1641\nsynthetic page line 1642\nsynthetic page line 1643\nsynthetic page line 1644\nsynthetic page line 1645\nsynthetic page line 1646\nsynthetic page line 1647\nsynthetic page line 1648\nsynthetic page line 1649\nsynthetic page line 1650\nsynthetic page line 1651\nsynthetic page line 1652\nsynthetic page line 1653\nsynthetic page line 1654\nsynthetic page line 1655\nsynthetic page line 1656\nsynthetic page line 1657\nsynthetic page line 1658\nsynthetic page line 1659\nsynthetic page line 1660\nsynthetic page line 1661\nsynthetic page line 1662\nsynthetic page line 1663\nsynthetic page line 1664\nsynthetic page line 1665\nsynthetic page line 1666\nsynthetic page line 1667\nsynthetic page line 1668\nsynthetic page line 1669\nsynthetic page line 1670\nsynthetic page line 1671\nsynthetic page line 1672\nsynthetic page line 1673\nsynthetic page line 1674\nsynthetic page line 1675\nsynthetic page line 1676\nsynthetic page line 1677\nsynthetic page line 1678\nsynthetic page line 1679\nsynthetic page line 1680\nsynthetic page line 1681\nsynthetic page line 1682\nsynthetic page line 1683\nsynthetic page line 1684\nsynthetic page line 1685\nsynthetic page line 1686\nsynthetic page line 1687\nsynthetic page line 1688\nsynthetic page line 1689\nsynthetic page line 1690\nsynthetic page line 1691\nsynthetic page line 1692\nsynthetic page line 1693\nsynthetic page line 1694\nsynthetic page line 1695\nsynthetic page line 1696\nsynthetic page line 1697\nsynthetic page line 1698\nsynthetic page line 1699\nsynthetic page line 1700\nsynthetic page line 1701\nsynthetic page line 1702\nsynthetic page line 1703\nsynthetic page line 1704\nsynthetic page line 1705\nsynthetic page line 1706\nsynthetic page line 1707\nsynthetic page line 1708\nsynthetic page line 1709\nsynthetic page line 1710\nsynthetic page line 1711\nsynthetic page line 1712\nsynthetic page line 1713\nsynthetic page line 1714\nsynthetic page line 1715\nsynthetic page line 1716\nsynthetic page line 1717\nsynthetic page line 1718\nsynthetic page line 1719\nsynthetic page line 1720\nsynthetic page line 1721\nsynthetic page line 1722\nsynthetic page line 1723\nsynthetic page line 1724\nsynthetic page line 1725\nsynthetic page line 1726\nsynthetic page line 1727\nsynthetic page line 1728\nsynthetic page line 1729\nsynthetic page line 1730\nsynthetic page line 1731\nsynthetic page line 1732\nsynthetic page line 1733\nsynthetic page line 1734\nsynthetic page line 1735\nsynthetic page line 1736\nsynthetic page line 1737\nsynthetic page line 1738\nsynthetic page line 1739\nsynthetic page line 1740\nsynthetic page line 1741\nsynthetic page line 1742\nsynthetic page line 1743\nsynthetic page line 1744\nsynthetic page line 1745\nsynthetic page line 1746\nsynthetic page line 1747\nsynthetic page line 1748\nsynthetic page line 1749\nsynthetic page line 1750\nsynthetic page line 1751\nsynthetic page line 1752\nsynthetic page line 1753\nsynthetic page line 1754\nsynthetic page line 1755\nsynthetic page line 1756\nsynthetic page line 1757\nsynthetic page line 1758\nsynthetic page line 1759\nsynthetic page line 1760\nsynthetic page line 1761\nsynthetic page line 1762\nsynthetic page line 1763\nsynthetic page line 1764\nsynthetic page line 1765\nsynthetic page line 1766\nsynthetic page line 1767\nsynthetic page line 1768\nsynthetic page line 1769\nsynthetic page line 1770\nsynthetic page line 1771\nsynthetic page line 1772\nsynthetic page line 1773\nsynthetic page line 1774\nsynthetic page line 1775\nsynthetic page line 1776\nsynthetic page line 1777\nsynthetic page line 1778\nsynthetic page line 1779\nsynthetic page line 1780\nsynthetic page line 1781\nsynthetic page line 1782\nsynthetic page line 1783\nsynthetic page line 1784\nsynthetic page line 1785\nsynthetic page line 1786\nsynthetic page line 1787\nsynthetic page line 1788\nsynthetic page line 1789\nsynthetic page line 1790\nsynthetic page line 1791\nsynthetic page line 1792\nsynthetic page line 1793\nsynthetic page line 1794\nsynthetic page line 1795\nsynthetic page line 1796\nsynthetic page line 1797\nsynthetic page line 1798\nsynthetic page line 1799\nsynthetic page line 1800\nsynthetic page line 1801\nsynthetic page line 1802\nsynthetic page line 1803\nsynthetic page line 1804\nsynthetic page line 1805\nsynthetic page line 1806\nsynthetic page line 1807\nsynthetic page line 1808\nsynthetic page line 1809\nsynthetic page line 1810\nsynthetic page line 1811\nsynthetic page line 1812\nsynthetic page line 1813\nsynthetic page line 1814\nsynthetic page line 1815\nsynthetic page line 1816\nsynthetic page line 1817\nsynthetic page line 1818\nsynthetic page line 1819\nsynthetic page line 1820\nsynthetic page line 1821\nsynthetic page line 1822\nsynthetic page line 1823\nsynthetic page line 1824\nsynthetic page line 1825\nsynthetic page line 1826\nsynthetic page line 1827\nsynthetic page line 1828\nsynthetic page line 1829\nsynthetic page line 1830\nsynthetic page line 1831\nsynthetic page line 1832\nsynthetic page line 1833\nsynthetic page line 1834\nsynthetic page line 1835\nsynthetic page line 1836\nsynthetic page line 1837\nsynthetic page line 1838\nsynthetic page line 1839\nsynthetic page line 1840\nsynthetic page line 1841\nsynthetic page line 1842\nsynthetic page line 1843\nsynthetic page line 1844\nsynthetic page line 1845\nsynthetic page line 1846\nsynthetic page line 1847\nsynthetic page line 1848\nsynthetic page line 1849\nsynthetic page line 1850\nsynthetic page line 1851\nsynthetic page line 1852\nsynthetic page line 1853\nsynthetic page line 1854\nsynthetic page line 1855\nsynthetic page line 1856\nsynthetic page line 1857\nsynthetic page line 1858\nsynthetic page line 1859\nsynthetic page line 1860\nsynthetic page line 1861\nsynthetic page line 1862\nsynthetic page line 1863\nsynthetic page line 1864\nsynthetic page line 1865\nsynthetic page line 1866\nsynthetic page line 1867\nsynthetic page line 1868\nsynthetic page line 1869\nsynthetic page line 1870\nsynthetic page line 1871\nsynthetic page line 1872\nsynthetic page line 1873\nsynthetic page line 1874\nsynthetic page line 1875\nsynthetic page line 1876\nsynthetic page line 1877\nsynthetic page line 1878\nsynthetic page line 1879\nsynthetic page line 1880\nsynthetic page line 1881\nsynthetic page line 1882\nsynthetic page line 1883\nsynthetic page line 1884\nsynthetic page line 1885\nsynthetic page line 1886\nsynthetic page line 1887\nsynthetic page line 1888\nsynthetic page line 1889\nsynthetic page line 1890\nsynthetic page line 1891\nsynthetic page line 1892\nsynthetic page line 1893\nsynthetic page line 1894\nsynthetic page line 1895\nsynthetic page line 1896\nsynthetic page line 1897\nsynthetic page line 1898\nsynthetic page line 1899\nsynthetic page line 1900\nsynthetic page line 1901\nsynthetic page line 1902\nsynthetic page line 1903\nsynthetic page line 1904\nsynthetic page line 1905\nsynthetic page line 1906\nsynthetic page line 1907\nsynthetic page line 1908\nsynthetic page line 1909\nsynthetic page line 1910\nsynthetic page line 1911\nsynthetic page line 1912\nsynthetic page line 1913\nsynthetic page line 1914\nsynthetic page line 1915\nsynthetic page line 1916\nsynthetic page line 1917\nsynthetic page line 1918\nsynthetic page line 1919\nsynthetic page line 1920\nsynthetic page line 1921\nsynthetic page line 1922\nsynthetic page line 1923\nsynthetic page line 1924\nsynthetic page line 1925\nsynthetic page line 1926\nsynthetic page line 1927\nsynthetic page line 1928\nsynthetic page line 1929\nsynthetic page line 1930\nsynthetic page line 1931\nsynthetic page line 1932\nsynthetic page line 1933\nsynthetic page line 1934\nsynthetic page line 1935\nsynthetic page line 1936\nsynthetic page line 1937\nsynthetic page line 1938\nsynthetic page line 1939\nsynthetic page line 1940\nsynthetic page line 1941\nsynthetic page line 1942\nsynthetic page line 1943\nsynthetic page line 1944\nsynthetic page line 1945\nsynthetic page line 1946\nsynthetic page line 1947\nsynthetic page line 1948\nsynthetic page line 1949\nsynthetic page line 1950\nsynthetic page line 1951\nsynthetic page line 1952\nsynthetic page line 1953\nsynthetic page line 1954\nsynthetic page line 1955\nsynthetic page line 1956\nsynthetic page line 1957\nsynthetic page line 1958\nsynthetic page line 1959\nsynthetic page line 1960\nsynthetic page line 1961\nsynthetic page line 1962\nsynthetic page line 1963\nsynthetic page line 1964\nsynthetic page line 1965\nsynthetic page line 1966\nsynthetic page line 1967\nsynthetic page line 1968\nsynthetic page line 1969\nsynthetic page line 1970\nsynthetic page line 1971\nsynthetic page line 1972\nsynthetic page line 1973\nsynthetic page line 1974\nsynthetic page line 1975\nsynthetic page line 1976\nsynthetic page line 1977\nsynthetic page line 1978\nsynthetic page line 1979\nsynthetic page line 1980\nsynthetic page line 1981\nsynthetic page line 1982\nsynthetic page line 1983\nsynthetic page line 1984\nsynthetic page line 1985\nsynthetic page line 1986\nsynthetic page line 1987\nsynthetic page line 1988\nsynthetic page line 1989\nsynthetic page line 1990\nsynthetic page line 1991\nsynthetic page line 1992\nsynthetic page line 1993\nsynthetic page line 1994\nsynthetic page line 1995\nsynthetic page line 1996\nsynthetic page line 1997\nsynthetic page line 1998\nsynthetic page line 1999\nsynthetic page line 2000\nsynthetic page line 2001\nsynthetic page line 2002\nsynthetic page line 2003\nsynthetic page line 2004\nsynthetic page line 2005\nsynthetic page line 2006\nsynthetic page line 2007\nsynthetic page line 2008\nsynthetic page line 2009\nsynthetic page line 2010\nsynthetic page line 2011\nsynthetic page line 2012\nsynthetic page line 2013\nsynthetic page line 2014\nsynthetic page line 2015\nsynthetic page line 2016\nsynthetic page line 2017\nsynthetic page line 2018\nsynthetic page line 2019\nsynthetic page line 2020\nsynthetic page line 2021\nsynthetic page line 2022\nsynthetic page line 2023\nsynthetic page line 2024\nsynthetic page line 2025\nsynthetic page line 2026\nsynthetic page line 2027\nsynthetic page line 2028\nsynthetic page line 2029\nsynthetic page line 2030\nsynthetic page line 2031\nsynthetic page line 2032\nsynthetic page line 2033\nsynthetic page line 2034\nsynthetic page line 2035\nsynthetic page line 2036\nsynthetic page line 2037\nsynthetic page line 2038\nsynthetic page line 2039\nsynthetic page line 2040\nsynthetic page line 2041\nsynthetic page line 2042\nsynthetic page line 2043\nsynthetic page line 2044\nsynthetic page line 2045\nsynthetic page line 2046\nsynthetic page line 2047\n"
+          }
+        ]
+      },
+      "acceptance": "exact",
+      "tags": [
+        "long",
+        "paging"
+      ],
+      "obligation": "Resolve every stored-output page in order before exact comparison; no truncation accepted."
+    },
+    {
+      "id": "malformed-text",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": null
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "malformed"
+      ],
+      "obligation": "Reject malformed result before sending any batch member."
+    },
+    {
+      "id": "malformed-image",
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "data": null,
+            "mimeType": "image/png"
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "malformed"
+      ],
+      "obligation": "Reject malformed result before sending any batch member."
+    },
+    {
+      "id": "unknown-part",
+      "result": {
+        "content": [
+          {
+            "type": "audio",
+            "data": ""
+          }
+        ]
+      },
+      "acceptance": "reject",
+      "tags": [
+        "malformed"
+      ],
+      "obligation": "Reject malformed result before sending any batch member."
+    }
+  ]
+}

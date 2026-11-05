@@ -1,6 +1,5 @@
 import {
   createAssistantMessageEventStream,
-  validateToolArguments,
   isContextOverflow,
 } from "@earendil-works/pi-ai";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
@@ -28,6 +27,45 @@ import type { MuseHostOptions } from "./host.js";
 
 import { isQualifiedMuseModel, museResponseIdentity, museModelRoute } from "./model-route.js";
 export { isQualifiedMuseModel } from "./model-route.js";
+
+/** Per logical Pi request: native ingress waits for acknowledged admission and
+ * async observers before Pi normalization. Status 0 means non-HTTP, never 200.
+ * Muse owns/folds its SDK state first; callbacks observe, not replace, events. */
+function requestHooks(model:any,options:any,onError:(error:Error)=>void) {
+  if(!options.onResponse && !options.onProviderStreamEvent)return {
+    enqueue:(work:()=>void)=>work(),observe:(_event:any,consume:()=>void)=>consume(),admit:async(_acceptance:string)=>{},
+  };
+  let admitted=false,failed=false;
+  let tail=Promise.resolve();
+  const waiting:Array<()=>Promise<void>|void>=[];
+  const enqueue=(work:()=>Promise<void>|void)=>{
+    if(failed)return;
+    if(!admitted){waiting.push(work);return;}
+    tail=tail.then(async()=>{if(!failed)await work();}).catch(error=>{
+      failed=true;onError(error instanceof Error?error:new Error(String(error)));
+    });
+  };
+  return {
+    enqueue,
+    observe(event:any,consume:()=>void) {
+      // Failure control is immediate even when admission never succeeds. It
+      // cannot wait behind a response observer or be mistaken for a response.
+      if(event.kind==="fenced"){failed=true;waiting.length=0;consume();return;}
+      enqueue(async()=>{
+        await options.onProviderStreamEvent?.({transport:"official-muse-client",source:"muse-host",event:structuredClone(event)},model);
+        options.signal?.throwIfAborted();
+        consume();
+      });
+    },
+    async admit(acceptance:string) {
+      if(admitted || failed)return;
+      await options.onResponse?.({status:0,headers:{"x-pi-tether-transport":"official-muse-client","x-pi-tether-response":"logical-admission","x-pi-tether-acceptance":acceptance}},model);
+      options.signal?.throwIfAborted();
+      admitted=true;
+      for(const work of waiting.splice(0))enqueue(work);
+    },
+  };
+}
 
 /** Isolated instance for qualification fixtures; production uses the qualified default below. */
 export function createMuseProvider(config: {
@@ -74,6 +112,7 @@ type Episode = {
   textIndex?: number;
   detachAbort?: () => void;
   thinking?: Map<string,number>;
+  hooks: ReturnType<typeof requestHooks>;
 };
 type Binding = {
   key: string;
@@ -98,9 +137,8 @@ type Binding = {
   abort: AbortController;
   pending: Map<string, { invocation: BridgeInvocation; callId: string; result?: BridgeResult; verified: boolean }>;
   batch?: string[];
-  batchSpec?: Array<{callId:string;name:string;args:Record<string,unknown>;piCallId:string;nativeOnly?:boolean;verified?:boolean;nativeStart?:{itemId:string;turnId:string;recordedAt:string};journal?:{entryId:string;response:BridgeResult}}>;
+  batchSpec?: Array<{callId:string;name:string;args:Record<string,unknown>;piCallId:string;verified?:boolean;nativeStart?:{itemId:string;turnId:string;recordedAt:string};journal?:{entryId:string;response:BridgeResult}}>;
   tools: Array<{name:string;description:string;inputSchema:any}>;
-  schemaRefusals: Map<string,{name:string;args:Record<string,unknown>;approvalId:string;sessionId:string;turnId:string;settled:boolean}>;
   approvalHolds: Map<string,{approvalId:string;requirement:string;ready:boolean;promise:Promise<void>;resolve:()=>void;reject:(error:Error)=>void}>;
   steeringPending?: boolean;
   deferredTerminal?: any;
@@ -223,14 +261,6 @@ function fail(b: Binding, reason: string) {
   }
   void closeBinding(b);
 }
-function validArguments(tool: Binding["tools"][number] | undefined, callId:string, args:Record<string,unknown>): boolean {
-  if (!tool) return false;
-  try {
-    const checked=validateToolArguments({name:tool.name,description:tool.description ?? "",parameters:tool.inputSchema} as any,
-      {type:"toolCall",id:callId,name:tool.name,arguments:args as any});
-    return canonical(args)===canonical(checked);
-  } catch { return false; }
-}
 function settleBatch(b:Binding) {
   if (b.batchSpec?.every(c=>c.verified)) {
     b.batch=undefined; b.batchSpec=undefined; b.batchSurfaced=false;
@@ -282,7 +312,7 @@ function emitFrame(b: Binding, event: any) {
   // Never defer that divergence until Pi returns, or accept the next batch.
   if(event.kind==="frame") {
     const {method,params:p={}}=event.frame,item=p.item;
-    const spec=item?.kind==="toolCall" ? b.batchSpec?.find(c=>c.callId===item.callId && !c.nativeOnly && !c.verified) : undefined;
+    const spec=item?.kind==="toolCall" ? b.batchSpec?.find(c=>c.callId===item.callId && !c.verified) : undefined;
     if(spec && (method==="item/started" || method==="item/completed" && item.status==="timedOut")) {
       try {
         if(item.tool!==spec.name || item.args!==undefined && canonical(JSON.parse(item.args))!==canonical(spec.args) ||
@@ -348,15 +378,9 @@ function emitFrame(b: Binding, event: any) {
     }
     // A committed spec is sufficient to schedule Pi; MCP invocations may be
     // sequential and need the first journaled result before the next exists.
-    if(event.calls.some((call:any)=>{
-      const refusal=b.schemaRefusals.get(call.callId);
-      return refusal && (refusal.name!==call.name || canonical(refusal.args)!==canonical(call.args));
-    })) {fail(b,"Muse schema refusal differs from committed tool batch");return;}
-    b.batchSpec=event.calls.map((call:any)=>{
-      const nativeOnly=!validArguments(b.tools.find(t=>call.name===`mcp__pi__${t.name}`),call.callId,call.args);
-      const refusal=b.schemaRefusals.get(call.callId);
-      return {...call,piCallId:b.pending.get(call.callId)?.invocation.piCallId ?? randomUUID(),nativeOnly,verified:nativeOnly && refusal?.settled===true};
-    });
+    // Pi owns validation and coercion, including its normal error tool result.
+    // Keep original model arguments immutable for native/MCP identity checks.
+    b.batchSpec=event.calls.map((call:any)=>({...call,piCallId:b.pending.get(call.callId)?.invocation.piCallId ?? randomUUID()}));
     b.batch = event.calls.map((x:any)=>x.callId);
     for (const call of event.calls) {
       const pending=b.pending.get(call.callId);
@@ -403,32 +427,6 @@ function emitFrame(b: Binding, event: any) {
     try { applyMuseUsage(e.output,p); } catch(error:any) { fail(b,error.message); return; }
   }
   const item = p.item;
-  const refusal=item?.kind==="toolCall" ? b.schemaRefusals.get(item.callId) : undefined;
-  if(frame.method==="item/completed" && refusal) {
-    // This tool never crossed MCP: the public SDK approval handler refused its
-    // schema. Only the matching native rejection, not a synthetic Pi result,
-    // can settle it. Retain this receipt for receipt-before-commit delivery.
-    try {
-      if(item.itemId!==refusal.approvalId || item.tool!==refusal.name ||
-          p.sessionId!==refusal.sessionId || item.turnId!==refusal.turnId ||
-          canonical(JSON.parse(item.args))!==canonical(refusal.args) ||
-          item.status!=="rejected" || item.failureKind!=="approval_denied" ||
-          item.failureReason!=="approval aborted" || b.pending.has(item.callId))
-        throw new Error("identity or rejection differs from schema refusal");
-      if(!refusal.settled) b.host?.ledger?.record("tool_schema_refusal_settled",{
-        callId:item.callId,approvalId:refusal.approvalId,itemId:item.itemId,
-        status:item.status,failureKind:item.failureKind,failureReason:item.failureReason,
-        sourceRange:p.sourceRange,owner:"native-approval",piExecuted:false,
-      });
-      refusal.settled=true;
-      const spec=b.batchSpec?.find(c=>c.callId===item.callId);
-      if(spec) {
-        if(!spec.nativeOnly)throw new Error("schema refusal targets executable Pi spec");
-        spec.verified=true;settleBatch(b);
-      }
-    } catch(error:any) { fail(b,`Muse native schema refusal receipt: ${error.message}`); }
-    return;
-  }
   if (
     frame.method === "item/completed" &&
     item?.kind === "toolCall" &&
@@ -449,15 +447,15 @@ function emitFrame(b: Binding, event: any) {
       if (redactions.length) {
         b.host?.ledger?.record("tool_result_vendor_redaction", {
           callId: item.callId, itemId: item.itemId, count: redactions.length,
-          rule: "unique-nonempty-intraline-context-v2", spans: redactions,
-          textProjection: r.content.length > 1 ? "lf-joined-text-parts" : "single-text",
+          rule: "unique-nonempty-intraline-v3", spans: redactions, evidence:"declared-lossy",
+          textProjection: r.isError ? "lf-joined-all-text-parts" : images.length ? "native-ordered-parts-with-image-metadata" : "native-text-chunk-fold",
           exactModelConsumption: false,
         });
         publishRedactionStatus(b, redactions.length);
       }
       if (images.length) b.host?.ledger?.record("tool_result_image_unverifiable", {
         callId: item.callId, piToolCallId: b.batchSpec?.find(c=>c.callId===item.callId)?.piCallId ?? pending.invocation.piCallId, itemId: item.itemId,
-        images, delivered: true, unverifiableInContent: true,
+        images:images.map(image=>({...image,modelVisibility:image.modelVisibility??"unproven"})), deliveredToMcp: true, evidence:"declared-lossy", unverifiableInContent: true,
         rule: "mcp-image-placeholder-v1", exactModelConsumption: false,
       });
       pending.verified = true;
@@ -495,7 +493,9 @@ function attach(b: Binding, e: Episode, signal?: AbortSignal) {
     }
   }
   const events = b.buffered.splice(0);
-  for (const event of events) emitFrame(b, event);
+  // These frames were already observed while detached. Preserve that single
+  // observation, but gate their normalization behind this request's response.
+  for (const event of events) e.hooks.enqueue(() => emitFrame(b, event));
 }
 function surface(b: Binding, inv: BridgeInvocation) {
   const callId = (inv.metadata as any)?.callId;
@@ -539,8 +539,7 @@ function flushTools(b: Binding) {
   const e=b.episode;
   if (!b.batch || b.batchSurfaced || !b.batchSpec) return;
   if (!e || e.ended) {fail(b,"Pi episode detached during committed MCP batch");return;}
-  const executable=b.batchSpec.filter(c=>!c.nativeOnly);
-  if(!executable.length)return; // Keep streaming until the native rejection receipt.
+  const executable=b.batchSpec;
   b.batchSurfaced=true;
   if (e.textIndex !== undefined)
     e.stream.push({
@@ -578,7 +577,7 @@ function flushTools(b: Binding) {
   e.stream.end();
 }
 /** Live inference is explicit opt-in; echo always launches the offline provider. */
-function streamViaMuse(model: any, input: any, options: any = {}) {
+function streamEffective(model: any, input: any, options: any = {}) {
   if(config.modelAllowed && !config.modelAllowed(model)){
     const refused=createAssistantMessageEventStream();const output=message(model);output.stopReason="error";output.errorMessage="Muse model is not qualified for Pi prompt/compaction; select a catalogue-registered Spark 1.3 contributor, Wonder or Wonder Full route";
     refused.push({type:"error",reason:"error",error:output});refused.end();return refused;
@@ -587,7 +586,26 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
   const requestedMode = selectMode(model);
   if (!context.tools.length) {
     if (rawCompletionQualified(model))
-      return streamRawCompletion(model, context, options, message, openHost, "replace");
+      return streamRawCompletion(model, context, options, message, async hostOptions => {
+        const hooks=requestHooks(model,options,error=>hostOptions.onEvent?.({kind:"fenced",reason:error.message}));
+        const host=await openHost({...hostOptions,onEvent:event=>hooks.observe(event,()=>hostOptions.onEvent?.(event))});
+        return new Proxy(host,{get(target,key){
+          if(key==="submitInput")return async (...args:any[])=>{
+            try {
+              const ack=await (target.submitInput as any)(...args);
+              await hooks.admit("turn/start");
+              return ack;
+            } catch(error) {
+              // Admission can fence before the raw stream begins awaiting its
+              // terminal promise. Preserve the host's neutral no-replay reason.
+              if(target.fencedReason)throw new Error(target.fencedReason);
+              throw error;
+            }
+          };
+          const value=Reflect.get(target,key,target);
+          return typeof value==="function"?value.bind(target):value;
+        }});
+      }, "replace");
     // Refuse before looking up or attaching the coding binding. A failed summary
     // must not retire or settle an unrelated parked coding request.
     const refused=createAssistantMessageEventStream();const output=message(model);
@@ -596,7 +614,11 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
   }
   const stream = createAssistantMessageEventStream();
   const output = message(model);
-  const episode: Episode = { stream, output, ended: false };
+  const episode: Episode = { stream, output, ended: false, hooks: requestHooks(model,options,error=>{
+    if(binding)fail(binding,error.message);
+    else {output.stopReason="error";output.errorMessage=error.message;stream.push({type:"error",reason:"error",error:output});stream.end();}
+  }) };
+  let binding: Binding | undefined;
   void (async () => {
     let b: Binding | undefined;
     try {
@@ -653,25 +675,24 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
         b = undefined;
       }
       if (b) {
+        binding = b;
         b.episode = episode;
         if (!b.batch) {
           const delta = context.messages.slice(b.messages.length);
           if (!delta.length || !delta.every((m:any)=>m.role === "user"))
             throw new Error("Muse completed-turn continuation requires an exact append of user messages");
           const text = museCurrentInput(delta);
-          stream.push({ type: "start", partial: output });
+          episode.hooks.enqueue(()=>stream.push({type:"start",partial:output}));
           attach(b, episode, options.signal);
           if (b.closed) return;
           b.messages = structuredClone(context.messages);
           b.requestHash=lastUserHash(context.messages);
           b.messageHash = historyHash(b.messages);
-          // Like the host's committed identities, refusals are native-turn scoped.
-          // Call IDs may be reused in a later user turn, never within a repair.
-          b.schemaRefusals.clear();
           await b.host!.submitInput(text, museEffort(options.reasoning));
+          await episode.hooks.admit("turn/start");
           return;
         }
-        const pendingBatch=b.batchSpec!.filter(c=>!c.nativeOnly);
+        const pendingBatch=b.batchSpec!;
         if (pendingBatch.some(p=>p.journal)) throw new Error("Muse pending result already supplied");
         const delta = context.messages.slice(b.messages.length),
           assistant = delta[0],
@@ -720,12 +741,15 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
         assertToolResultVerifiable(response);
         return {pending,entry,response};
         });
-        stream.push({ type: "start", partial: output });
+        episode.hooks.enqueue(()=>stream.push({type:"start",partial:output}));
         attach(b, episode, options.signal);
         if (b.closed) return;
         b.messages = structuredClone(context.messages);
         b.requestHash=lastUserHash(context.messages);
         b.messageHash = historyHash(context.messages);
+        // The native suspended MCP request already exists. A response hook may
+        // refuse its continuation before any journaled result is delivered.
+        await episode.hooks.admit("suspended-mcp-continuation");
         b.steeringPending=steering.length>0;
         const consumed=steering.length?new Promise<void>(resolve=>{b!.receiptsDone=resolve;}):undefined;
         for(const {pending,entry,response} of journaled){
@@ -762,8 +786,9 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
       const bridge = createMcpBridge({
         sessionId: key,
         generation: randomUUID(),
+        argumentValidation: "pi",
         tools,
-        onInvocation: (inv) => surface(candidate, inv),
+        onInvocation: (inv) => candidate.episode!.hooks.enqueue(()=>surface(candidate, inv)),
       });
       candidate = {
         key,
@@ -776,7 +801,6 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
         park: parking && Boolean(sessionManager?.getSessionFile?.()),
         reservations,
         tools,
-        schemaRefusals:new Map(),
         approvalHolds:new Map(),
         buffered: [],
         closed: false,
@@ -786,8 +810,9 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
         abort: new AbortController(),
       };
       b = candidate;
+      binding = b;
       bindings.set(key, b);
-      stream.push({ type: "start", partial: output });
+      episode.hooks.enqueue(()=>stream.push({type:"start",partial:output}));
       attach(b, episode, options.signal);
       if (b.closed) return;
       const descriptor = await bridge.start();
@@ -840,15 +865,6 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
           if (!tool || !request.toolCallId) return false;
           try {
             const args = JSON.parse(request.rawArgs);
-            if (!validArguments(tool,request.toolCallId,args)) {
-              const previous=candidate.schemaRefusals.get(request.toolCallId);
-              if(previous && (previous.name!==request.toolName || canonical(previous.args)!==canonical(args) || previous.approvalId!==request.approvalId || previous.sessionId!==request.sessionId || previous.turnId!==request.turnId))return false;
-              if(!previous) {
-                candidate.schemaRefusals.set(request.toolCallId,{name:request.toolName,args,approvalId:request.approvalId,sessionId:request.sessionId,turnId:request.turnId,settled:false});
-                candidate.host?.ledger?.record("tool_schema_refusal",{callId:request.toolCallId,approvalId:request.approvalId,tool:request.toolName,reason:"Pi tool argument schema or coercion rejected",owner:"tether-approval",piExecuted:false});
-              }
-              return false;
-            }
             const spec=candidate.batchSpec?.find(c=>c.callId===request.toolCallId);
             if(candidate.closed || (candidate.batchSpec && (!spec || spec.verified || spec.name!==request.toolName || canonical(spec.args)!==canonical(args))))return false;
             const previous = reservations.get(request.toolCallId);
@@ -869,7 +885,7 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
             return false;
           }
         },
-        onEvent: (event: any) => emitFrame(candidate, event),
+        onEvent: (event: any) => candidate.episode!.hooks.observe(event,()=>emitFrame(candidate, event)),
       }));
       b.host = host;
       host.ledger?.beginEpisode();
@@ -878,8 +894,9 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
         return;
       }
       await host.submitInput(text, museEffort(options.reasoning));
+      await episode.hooks.admit("turn/start");
     } catch (error: any) {
-      const reason = String(error?.message || error);
+      const reason = b?.host?.fencedReason ?? String(error?.message || error);
       if (b) { b.episode = episode; fail(b, reason); }
       else {
         episode.ended = true;
@@ -892,6 +909,28 @@ function streamViaMuse(model: any, input: any, options: any = {}) {
         });
         stream.end();
       }
+    }
+  })();
+  return stream;
+}
+function streamViaMuse(model:any,input:any,options:any={}) {
+  const stream=createAssistantMessageEventStream();
+  void (async()=>{
+    try {
+      // Expose the logical official-client request, not an invented HTTP body.
+      const payload={...structuredClone(piContext(input)),transport:"official-muse-client"};
+      const replacement=await options.onPayload?.(payload,model);
+      const effective=replacement===undefined?payload:replacement;
+      if(!effective || typeof effective!=="object" || !Array.isArray(effective.messages) || !Array.isArray(effective.tools) || typeof effective.systemPrompt!=="string")
+        throw new Error("Muse onPayload must return a logical request with systemPrompt, messages and tools");
+      if(effective.messages.some((entry:any)=>entry?.role==="system"))
+        throw new Error("Muse logical payload messages exclude system messages; edit logical systemPrompt and tools instead");
+      const request={...effective,tools:effective.tools.map((tool:any,index:number)=>index ? tool : ({...tool,description:`${tool.description??""}\n\nTransport notice: [REDACTED] in tool text can be official-client redaction; original bytes in those spans are unavailable. Tool images are delivered without pixel attestation; GIF/WebP visibility is unqualified. Images attached to failed tool results are omitted by the official client.`}))};
+      for await(const event of streamEffective(model,request,options))stream.push(event);
+      stream.end();
+    } catch(error:any) {
+      const output=message(model);output.stopReason=options.signal?.aborted?"aborted":"error";output.errorMessage=String(error?.message??error);
+      stream.push({type:"error",reason:output.stopReason,error:output});stream.end();
     }
   })();
   return stream;

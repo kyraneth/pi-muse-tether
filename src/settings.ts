@@ -15,20 +15,22 @@ export async function linkHostLogin(hostRoot:string, realConfigHome:string) {
   assertLoginSafe();
   const real=join(realConfigHome,"muse/auth.json"), link=join(hostRoot,"config/muse/auth.json");
   let before=await stat(real);await symlink(real,link);
-  const ownedLink=await lstat(link);
   return async()=>{
-    let intact=false;
+    let intact=false, missing=false;
     try {
       const privateState=await lstat(link);
-      intact=privateState.isSymbolicLink() && privateState.ino===ownedLink.ino &&
-        privateState.dev===ownedLink.dev && await readlink(link)===real;
-    } catch { /* A missing/replaced private link is never repaired automatically. */ }
-    if(!intact){loginFault="Muse login metadata symlink replaced; STOP, retain private config and request account-owner review";throw new Error(loginFault);}
+      // Boat lazyfs hydration changes st_dev/st_ino without changing this link.
+      // Ownership here is the login destination, not filesystem identity: a new
+      // symlink to the same target still gives the client the same login file.
+      intact=privateState.isSymbolicLink() && await readlink(link)===real;
+    } catch (error) { missing=(error as NodeJS.ErrnoException).code==="ENOENT"; }
+    if(!intact){loginFault=`Muse login metadata symlink ${missing?"missing":"replaced"}; STOP, retain private config and request account-owner review`;throw new Error(loginFault);}
     const after=await stat(real);
     const metadata={before:{inode:String(before.ino),size:before.size,mtimeMs:before.mtimeMs},after:{inode:String(after.ino),size:after.size,mtimeMs:after.mtimeMs},
-      realFileChanged:before.ino!==after.ino || before.size!==after.size || before.mtimeMs!==after.mtimeMs,symlinkIntact:intact};
+      realMetadataChanged:before.ino!==after.ino || before.size!==after.size || before.mtimeMs!==after.mtimeMs,symlinkIntact:intact};
     // Account-owner observed a normal official-client refresh on main, 2026-11-02:
     // real-file replacement is metadata evidence, NOT a credential incident.
+    // Hydration can also change inode/timestamp precision: no refresh/content claim.
     before=after;
     return metadata;
   };

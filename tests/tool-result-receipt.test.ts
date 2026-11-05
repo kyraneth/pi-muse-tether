@@ -20,12 +20,12 @@ describe("MSP 1.4.14 exact tool result receipts",()=>{
  it.each([
   {status:"completed"},{status:"rejected"},{failureKind:"approval_denied"},
   {failureReason:"changed"},{visibleOutput:"changed"},{visibleOutput:undefined},
-  {truncated:true},{modelVisibleContent:[{type:"image"}]},
+  {truncated:true},
  ])("rejects mutated error receipt %j",mutation=>{
   expect(()=>toolResultReceipt({...errorItem,...mutation},sent)).toThrow();
  });
- it("returns observed error bytes, so the bridge still detects changed failureReason plus matching display",()=>{
-  expect(toolResultReceipt({...errorItem,failureReason:"changed",visibleOutput:"tool failed: changed"},sent)).not.toEqual(sent);
+ it("fails hard on changed failureReason even when matching its display",()=>{
+  expect(()=>toolResultReceipt({...errorItem,failureReason:"changed",visibleOutput:"tool failed: changed"},sent)).toThrow(/projection mismatch/);
  });
  it.each([{status:"failed"},{failureKind:"failed"},{failureReason:"error"}])("rejects successful-result status/error mutation %j",mutation=>{
   expect(()=>toolResultReceipt({...success,...mutation},ok)).toThrow();
@@ -36,7 +36,7 @@ describe("MSP 1.4.14 exact tool result receipts",()=>{
   {content:[{type:"text",text:"abc"},{type:"image",mimeType:"image/png",data:"YWJj"}],isError:false},
   {content:[],isError:false},
  ])("fails loudly when MSP cannot prove MCP parts %j",result=>{
-  expect(()=>toolResultReceipt(success,result as any)).toThrow(/part boundaries/);
+  expect(()=>toolResultReceipt(success,result as any)).toThrow(/projection mismatch|malformed image/);
  });
  it("accepts exact text with outputRef, with and without a truncated view",async()=>{
   const stored=await readStoredToolOutput({outputRef:ref},async()=>page);

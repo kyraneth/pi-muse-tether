@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { museCatalogModels, museResponseIdentity } from "../src/catalog.js";
+import { museCatalogAssessment, museCatalogModels, museResponseIdentity } from "../src/catalog.js";
 import { museModelRoute } from "../src/model-route.js";
 import { applyMuseUsage, CONTRIBUTOR_COST } from "../src/usage.js";
 const catalog = JSON.parse(readFileSync(new URL("./fixtures/provider-catalog-window.json", import.meta.url), "utf8"));
@@ -17,11 +17,18 @@ describe("hand-written synthetic provider catalogue", () => {
       expect(m.thinkingLevelMap.off).toBeNull();
     }
   });
-  it.each(["muse-spark-1.3", "muse-wonder-1.0", "muse-wonder-full-1.0"])("refuses missing required %s without an echo-cloned fallback", id => {
-    expect(() => museCatalogModels({...catalog, models: catalog.models.filter((m: any) => m.modelId !== id)})).toThrow(/Muse catalogue.*missing/);
+  it.each(["muse-spark-1.3", "muse-wonder-1.0", "muse-wonder-full-1.0"])("keeps the other models when %s is absent", id => {
+    const models = museCatalogModels({...catalog, models: catalog.models.filter((m: any) => m.modelId !== id)});
+    expect(models.length).toBeGreaterThan(0);
+    expect(models.some(m => museModelRoute(m.id)?.modelId === id)).toBe(false);
   });
-  it.each([null, [], ["invented"], ["high"]])("refuses ungrounded or default-incompatible variants %j", variants => {
-    expect(() => museCatalogModels({...catalog, models: catalog.models.map((m: any) => ({...m, variants}))})).toThrow(/Muse catalogue/);
+  it.each([null, [], ["invented"]])("omits ungrounded or default-incompatible variants %j", variants => {
+    expect(museCatalogModels({...catalog, models: catalog.models.map((m: any) => ({...m, variants}))})).toEqual([]);
+  });
+  it("reports missing groups and never accepts a bundled source", () => {
+    const partial = {...catalog, models: catalog.models.filter((m: any) => m.modelId === "muse-spark-1.3")};
+    expect(museCatalogAssessment(partial).diagnostics.missing).toEqual([["muse-wonder-1.0"],["muse-wonder-full-1.0"]]);
+    expect(museCatalogModels({...catalog,source:"bundledCatalog"})).toEqual([]);
   });
   it("does not price Wonder using Spark or invent a Wonder contributor physical ID", () => {
     for (const m of museCatalogModels(catalog)) {

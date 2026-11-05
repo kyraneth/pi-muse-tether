@@ -44,8 +44,18 @@ export async function openFixtureHost(options:MuseHostOptions):Promise<MuseHost>
   else if(f.method==="turn/cancel")reply(f,{commandId:p.commandId,status:"accepted"});
   else if(f.method==="turn/start"){
    turn++;await record({kind:"input",id,purpose,commandId:p.commandId,text:p.input[0].text});
+   const quota=fixtureState.quotaMode && !fixtureState.quotaIssued;
+   if(quota)fixtureState.quotaIssued=true;
+   if(quota && fixtureState.quotaMode==="admission") {
+    await record({kind:"quota",phase:"admission"});
+    incoming.push({jsonrpc:"2.0",id:f.id,error:{code:-32001,message:"Synthetic rate limit HTTP 429",data:{kind:"rate_limit",httpStatus:429,retryable:true,quota:{}}}});return;
+   }
    reply(f,{commandId:p.commandId,status:"accepted",disposition:"started",startedNewTurn:true,turnId:p.commandId});
    notify("turn/started",{commandId:p.commandId,turnId:p.commandId});
+   if(quota) {
+    await record({kind:"quota",phase:"terminal"});
+    notify("turn/completed",{turnId:p.commandId,terminal:"failed",error:{kind:"rate_limit",message:"Synthetic rate limit HTTP 429",httpStatus:429,quota:{}}});return;
+   }
    if(purpose==="raw"){fixtureState.rawStarted?.();if(fixtureState.rawHold)await fixtureState.rawHold;}
    if(purpose==="raw"&&["helper","tool"].includes(fixtureState.raw)){
     notify("item/started",{turnId:p.commandId,item:{itemId:`${id}-bad`,kind:fixtureState.raw==="helper"?"reminderChild":"toolCall",tool:"mcp__pi__read",callId:"never-execute"}});

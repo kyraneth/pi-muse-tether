@@ -59,7 +59,6 @@ describe('Muse 1.4.14 multipart projection on synthetic fixtures (no inference)'
   {visibleOutput:image.item.visibleOutput.replace('image/png','image/jpeg')},
   {visibleOutput:image.item.visibleOutput.replace(/bytes=\d+/,'bytes=[REDACTED]')},
   {visibleOutput:image.item.visibleOutput+'\n'},
-  {modelVisibleContent:[{type:'image'}]},
   {status:'failed'},{failureKind:'unknown'},{failureReason:'bad'},{truncated:true},
  ])('refuses changed image projection/status %j without declaring delivery',mutation=>{
   const reports:any[]=[];expect(()=>verify(image,mutation,images=>reports.push(...images))).toThrow();expect(reports).toEqual([]);
@@ -79,25 +78,19 @@ describe('Muse 1.4.14 multipart projection on synthetic fixtures (no inference)'
    expect(spans).toHaveLength(3);
   }
  });
- it('never uses a part boundary as context for an otherwise unbounded redaction',()=>{
+ it('declares unique line-end redaction even at a part boundary',()=>{
   const sent={content:[{type:'text' as const,text:'left secret'},{type:'text' as const,text:'right'}],isError:false};
-  expect(()=>toolResultReceipt({status:'completed',visibleOutput:'left [REDACTED]\nright'},sent)).toThrow(/redaction/);
+  expect(toolResultReceipt({status:'completed',visibleOutput:'left [REDACTED]\nright'},sent)).toEqual(sent);
  });
  it.each([
-  [],[image.sent.content[1]],
-  [{type:'text',text:''},image.sent.content[1]],
-  [{type:'text',text:''},{type:'text',text:'second'}],
-  [image.sent.content[1],{type:'text',text:'after'}],
-  [image.sent.content[0],image.sent.content[1],image.sent.content[1]],
-  [image.sent.content[0],image.sent.content[1],{type:'text',text:'hints'}],
   [image.sent.content[0],{...image.sent.content[1],mimeType:'image/jpeg'}],
   [image.sent.content[0],{...image.sent.content[1],data:image.sent.content[1].data+'\n'}],
   [image.sent.content[0],{type:'image',mimeType:'image/png',data:'YWJj'}],
  ].map(content=>({content})))('refuses unqualified/invalid layouts before delivery $content',({content})=>{
   expect(()=>assertToolResultVerifiable({content} as any)).toThrow(/cannot verify MCP parts/);
  });
- it('keeps single-text empty output compatibility but refuses multipart errors',()=>{
-  expect(toolResultReceipt({status:'completed',visibleOutput:''},{content:[{type:'text',text:''}],isError:false})).toEqual({content:[{type:'text',text:''}],isError:false});
-  for(const capture of [text,image])expect(()=>toolResultReceipt(capture.item,{...capture.sent,isError:true},undefined,undefined,()=>{})).toThrow(/cannot verify MCP parts/);
+ it('keeps single-text empty output compatibility and verifies error status',()=>{
+  expect(toolResultReceipt({status:'completed',visibleOutput:'[MCP tool returned no content]'},{content:[{type:'text',text:''}],isError:false})).toEqual({content:[{type:'text',text:''}],isError:false});
+  for(const capture of [text,image])expect(()=>toolResultReceipt(capture.item,{...capture.sent,isError:true},undefined,undefined,()=>{})).toThrow(/failed status/);
  });
 });

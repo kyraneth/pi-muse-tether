@@ -19,9 +19,9 @@ export const EMPTY_CATALOGUE_HINT = ". The official Muse client received an empt
   + "account works elsewhere, Meta may be refusing this network path (seen on datacenter IPv6); "
   + "see the pi-muse-tether README section \"Empty catalogue on some cloud networks\"";
 
-export function museCatalogModels(catalog: any) {
+export function museCatalogAssessment(catalog: any) {
   const rows: any[] = Array.isArray(catalog?.models) ? catalog.models : [];
-  const valid = rows.filter(m => isCatalogueModel(m.modelId) &&
+  const valid = (catalog?.source === "providerCatalog" ? rows : []).filter(m => m && typeof m === "object" && isCatalogueModel(m.modelId) &&
     m.providerId === "meta" && typeof m.displayLabel === "string" && m.displayLabel.length &&
     Number.isSafeInteger(m.contextLimit) && m.contextLimit > 0 &&
     Number.isSafeInteger(m.outputLimit) && m.outputLimit > 0 &&
@@ -30,11 +30,13 @@ export function museCatalogModels(catalog: any) {
       Object.values(museThinkingLevelMap([tier])).includes(tier)) &&
     m.variants.includes(m.defaultReasoningEffort));
   const missing = MUSE_MODEL_GROUPS.filter(group => !valid.some(m => (group as readonly string[]).includes(m.modelId)));
-  if (catalog?.source !== "providerCatalog" || missing.length)
-    throw new Error(`Muse catalogue cannot register required live models: ${JSON.stringify({
-      source: catalog?.source, providerId: catalog?.providerId, profileId: catalog?.profileId,
-      missing, models: rows.map(m => ({modelId:m.modelId,contextLimit:m.contextLimit,outputLimit:m.outputLimit,variants:m.variants})),
-    })}; no model request submitted${rows.length ? "" : EMPTY_CATALOGUE_HINT}`);
+  return { valid, diagnostics: { source: catalog?.source ?? null, providerId: catalog?.providerId ?? null,
+    profileId: catalog?.profileId ?? null, missing, models: rows.map(m => ({modelId:m?.modelId,contextLimit:m?.contextLimit,outputLimit:m?.outputLimit,variants:m?.variants})),
+    ...(!rows.length ? {hint:EMPTY_CATALOGUE_HINT} : {}) } };
+}
+
+export function museCatalogModels(catalog: any) {
+  const {valid} = museCatalogAssessment(catalog);
   return valid.flatMap(m => (m.modelId.includes("wonder") ? ["off", "on"] : ["on"]).map(contributorMode => ({
     id: m.modelId.includes("wonder") && contributorMode === "on" ? `${m.modelId}-contributor` : m.modelId,
     name: `${m.displayLabel} · ${contributorMode === "on" ? "Contributor" : "Normal"}${museModelCost(m.modelId).input === null ? " · pricing unknown" : ""}`,
