@@ -6,7 +6,7 @@ const providers:any[]=[];
 afterEach(async()=>{for(const p of providers) await p.retireAll();providers.length=0;fixtureState.opens=[];fixtureState.events=[];fixtureState.raw="success";fixtureState.coding="normal";vi.unstubAllEnvs();});
 const user=(content:string)=>({role:"user",content});
 const tools=[{name:"read",description:"fixture",parameters:{type:"object",properties:{path:{type:"string"}}}}];
-for (const id of ["muse-wonder-1.0", "muse-wonder-1.0-contributor", "muse-wonder-full-1.0", "muse-wonder-full-1.0-contributor", "muse-spark-1.3"]) {
+for (const id of ["muse-wonder-1.0", "muse-wonder-1.0-contributor", "muse-wonder-full-1.0", "muse-wonder-full-1.0-contributor", "muse-spark-1.3", "muse-spark-1.3-contributor", "muse-ember-1.0", "muse-spark-1.2", "muse-spark-1.2-contributor"]) {
  it(`${id} sends selected native model and tier through coding AND raw completion`,async()=>{
   vi.stubEnv("PI_MUSE_TETHER_LIVE","1");
   const opened:any[]=[];
@@ -20,7 +20,10 @@ for (const id of ["muse-wonder-1.0", "muse-wonder-1.0-contributor", "muse-wonder
   expect(opened.map(o=>({modelId:o.model,contributorMode:o.contributorMode}))).toEqual([museModelRoute(id),museModelRoute(id)]);
   for(const output of [first,raw]) {
    expect(output.contributorMode).toBe(museModelRoute(id)?.contributorMode);
-   if(id.includes("wonder")) { expect(output.responseModel).toBeUndefined();expect(output.usage.cost.total).toBeNull(); }
+   const route = museModelRoute(id)!;
+   expect(output.responseModel).toBe(route.contributorMode === "on" ? `${route.modelId}-contributor` : route.modelId);
+   expect(output.responseModelSource).toMatch(/^derived:/);
+   if(!id.startsWith("muse-spark-1.3")) expect(output.usage.cost.total).toBeNull();
   }
   // A tier switch is a new host, never reuse a parked opposite-tier process.
   if(id.includes("wonder")&&!id.endsWith("-contributor")) {

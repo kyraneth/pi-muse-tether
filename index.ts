@@ -18,22 +18,24 @@ export async function registerMuseExtension(pi: ExtensionAPI, provider = {stream
   if (!template)
     throw new Error("Pi supplied no catalog template for offline echo");
   const stream = streamViaMuse;
-  let catalog: Awaited<ReturnType<typeof discoverMuseCatalog>> | undefined;
-  let catalogueError: string | undefined;
-  if (process.env.PI_MUSE_TETHER_LIVE === "1") {
-    try { catalog = await discoverMuseCatalog(); }
-    catch (error) { catalogueError = error instanceof Error ? error.message : String(error); }
-  }
-  const liveModels = catalog ? museCatalogModels(catalog) : [];
-  const catalogueDiagnostics = catalog ? museCatalogAssessment(catalog).diagnostics :
-    { status: catalogueError ? "discovery failed" : "live disabled", ...(catalogueError ? {error: catalogueError} : {}) };
+  const discover = async () => {
+    if (process.env.PI_MUSE_TETHER_LIVE !== "1")
+      return {models: [], diagnostics: {status: "live disabled"}};
+    try {
+      const catalog = await discoverMuseCatalog();
+      return {models: museCatalogModels(catalog), diagnostics: museCatalogAssessment(catalog).diagnostics};
+    } catch (error) {
+      return {models: [], diagnostics: {status: "discovery failed", error: error instanceof Error ? error.message : String(error)}};
+    }
+  };
+  let catalogue = await discover();
   registerApiDispatch(ID, stream);
-  pi.registerProvider(ID, {
+  const registerProvider = () => pi.registerProvider(ID, {
     api: ID,
     apiKey: "unused",
     baseUrl: "pi-muse-tether",
     models: [
-      ...liveModels,
+      ...catalogue.models,
       {
         id: "echo",
         name: "Muse echo (offline fixture)",
@@ -46,7 +48,18 @@ export async function registerMuseExtension(pi: ExtensionAPI, provider = {stream
     ],
     streamSimple: stream,
   });
-  pi.registerCommand("muse-doctor", {description:"Local Muse version, recipe and telemetry diagnostic (no model/account request)",handler:async(_args,ctx)=>{ctx.ui.notify(JSON.stringify({...JSON.parse(await museDoctor(ctx.model?.id)),catalogue:catalogueDiagnostics},null,2),"info");}});
+  registerProvider();
+  // Lifecycle refresh, not a timer or inference request. Also compare metadata:
+  // changed limits/efforts must reach Pi even when the IDs have not changed.
+  const modelShape = (models: typeof catalogue.models) =>
+    JSON.stringify([...models].sort((a, b) => a.id.localeCompare(b.id)));
+  pi.on("agent_end", async () => {
+    const next = await discover();
+    const changed = modelShape(next.models) !== modelShape(catalogue.models);
+    catalogue = next;
+    if (changed) registerProvider();
+  });
+  pi.registerCommand("muse-doctor", {description:"Local Muse version, recipe and telemetry diagnostic (no model/account request)",handler:async(_args,ctx)=>{ctx.ui.notify(JSON.stringify({...JSON.parse(await museDoctor(ctx.model?.id)),catalogue:catalogue.diagnostics},null,2),"info");}});
   pi.on("session_start", async (_event, ctx) => {
     setQuotaListener(payload=>ctx.ui.setStatus("muse-rate-limit",quotaStatusLine(payload)));
     setRetryStatusListener(status=>ctx.ui.setStatus("muse-retry",status));

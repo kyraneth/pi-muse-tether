@@ -11,7 +11,7 @@ afterEach(() => {
 });
 describe("pre-spawn Muse boundaries", () => {
   it("fails an unqualified live model loudly instead of silently dropping Pi instructions",async()=>{
-    const result=await qualifiedStream({...model,id:"muse-unsupported"},{messages:[message],tools:[]}).result();
+    const result=await qualifiedStream({...model,id:"not-a-muse-model"},{messages:[message],tools:[]}).result();
     expect(result.stopReason).toBe("error");expect(result.errorMessage).toContain("not qualified");expect(openMuseHost).not.toHaveBeenCalled();
   });
   it("labels contributor response identity as derived, never as observed telemetry",async()=>{

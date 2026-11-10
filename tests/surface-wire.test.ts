@@ -56,6 +56,8 @@ function fixture(exhausted = false) {
       const f = JSON.parse(s);
       writes.push(f);
       let result: any = {};
+      // Real 1.4.14 answers the 1.4.15 session-MCP inventory query methodNotFound.
+      if (f.method === "mcpServer/readInventory") { frames.push({jsonrpc:"2.0",id:f.id,error:{code:-32601,message:"method not found",data:{kind:"methodNotFound",retryable:false}}}); return; }
       if (f.method === "session/start")
         result = { session: { sessionId: "surface-wire" }, viewCursor: "0" };
       if (f.method === "usage/read") result = { usage: quota };
@@ -175,7 +177,7 @@ it("version gate prevents spawning serve for unqualified executable", async () =
     log = join(dir, "argv");
   await writeFile(
     binary,
-    `#!/bin/sh\nprintf '%s\\n' \"$*\" >> '${log}'\nprintf 'Muse Code 1.4.15\\n'\n`,
+    `#!/bin/sh\nprintf '%s\\n' \"$*\" >> '${log}'\nprintf 'Muse Code 1.4.13\\n'\n`,
     { mode: 0o700 },
   );
   await expect(
@@ -204,11 +206,17 @@ it("doctor remains local and reports unqualified client clearly without credenti
   expect(ok.client).toBe("1.4.14");
   expect(ok.apiKeyForwarded).toBe(false);
   expect(ok.cache.ttlSeconds).toBeNull();
-  await writeFile(binary, script("1.4.15"), { mode: 0o700 });
+  await writeFile(binary, script("1.4.16"), { mode: 0o700 });
+  const newer = JSON.parse(await museDoctor());
+  expect(newer.ok).toBe(true);
+  expect(newer.versionPolicy).toEqual({minimum:"1.4.14",testedMaximum:"1.4.15",newerThanTested:true,strict:false});
+  vi.stubEnv("PI_MUSE_TETHER_STRICT_VERSION", "1");
   const failed = JSON.parse(await museDoctor());
   expect(failed.ok).toBe(false);
-  expect(failed.error).toMatch(/Unqualified/);
+  expect(failed.error).toMatch(/STRICT_VERSION/);
+  await writeFile(binary, script("1.4.13"), { mode: 0o700 });
+  expect(JSON.parse(await museDoctor()).error).toMatch(/Unqualified/);
   const commands = await readFile(log, "utf8");
-  expect(commands).toBe("--version \n--version \n");
+  expect(commands).toBe("--version \n--version \n--version \n--version \n");
   expect(commands).not.toContain("SET");
 });

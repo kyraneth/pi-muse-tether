@@ -4,17 +4,19 @@ import { museCatalogAssessment, museCatalogModels, museResponseIdentity } from "
 import { museModelRoute } from "../src/model-route.js";
 import { applyMuseUsage, CONTRIBUTOR_COST } from "../src/usage.js";
 const catalog = JSON.parse(readFileSync(new URL("./fixtures/provider-catalog-window.json", import.meta.url), "utf8"));
+catalog.models.push({...catalog.models[0], modelId:"muse-ember-1.0", displayLabel:"Muse Ember"});
 
 describe("hand-written synthetic provider catalogue", () => {
-  it("registers exactly supported rows with their own limits and effort maps", () => {
+  it("registers every catalogue row with its own limits and effort maps", () => {
     const models = museCatalogModels(catalog);
-    expect(models.map(m => m.id)).toEqual(["muse-wonder-1.0", "muse-wonder-1.0-contributor", "muse-wonder-full-1.0", "muse-wonder-full-1.0-contributor", "muse-spark-1.3"]);
+    expect(models.map(m => m.id)).toEqual(["muse-wonder-1.0", "muse-wonder-1.0-contributor", "muse-wonder-full-1.0", "muse-wonder-full-1.0-contributor", "muse-spark-1.3", "muse-spark-1.3-contributor", "muse-spark-1.2", "muse-spark-1.2-contributor", "muse-ember-1.0"]);
     for (const m of models) {
       const row = catalog.models.find((r: any) => r.modelId === museModelRoute(m.id)?.modelId);
       expect(m.contextWindow).toBe(row.contextLimit);
       expect(m.maxTokens).toBe(row.outputLimit);
       expect(Object.values(m.thinkingLevelMap).filter(Boolean)).toEqual(row.variants);
       expect(m.thinkingLevelMap.off).toBeNull();
+      expect(m.name).toContain(museModelRoute(m.id)?.contributorMode === "on" ? " · Contributor" : " · Normal");
     }
   });
   it.each(["muse-spark-1.3", "muse-wonder-1.0", "muse-wonder-full-1.0"])("keeps the other models when %s is absent", id => {
@@ -25,20 +27,19 @@ describe("hand-written synthetic provider catalogue", () => {
   it.each([null, [], ["invented"]])("omits ungrounded or default-incompatible variants %j", variants => {
     expect(museCatalogModels({...catalog, models: catalog.models.map((m: any) => ({...m, variants}))})).toEqual([]);
   });
-  it("reports missing groups and never accepts a bundled source", () => {
-    const partial = {...catalog, models: catalog.models.filter((m: any) => m.modelId === "muse-spark-1.3")};
-    expect(museCatalogAssessment(partial).diagnostics.missing).toEqual([["muse-wonder-1.0"],["muse-wonder-full-1.0"]]);
+  it("has no required model groups and never accepts a bundled source", () => {
+    expect(museCatalogAssessment(catalog).diagnostics).not.toHaveProperty("missing");
     expect(museCatalogModels({...catalog,source:"bundledCatalog"})).toEqual([]);
   });
-  it("does not price Wonder using Spark or invent a Wonder contributor physical ID", () => {
+  it("keeps unknown prices separate from recipe-derived response identities", () => {
     for (const m of museCatalogModels(catalog)) {
-      const wonder = m.id.includes("wonder");
+      const wonder = !m.id.startsWith("muse-spark-1.3");
       expect(m.cost).toEqual(wonder ? {input:null,output:null,cacheRead:null,cacheWrite:null} : CONTRIBUTOR_COST);
       const identity: any = museResponseIdentity(m.id);
       if (wonder) {
         expect(m.name).toContain("pricing unknown");
-        expect(identity.responseModel).toBeUndefined();
-        expect(identity.responseModelSource).toMatch(/^unknown:/);
+        expect(identity.responseModel).toBe(m.id);
+        expect(identity.responseModelSource).toMatch(/^derived:/);
         expect(identity.contributorMode).toBe(m.id.endsWith("-contributor") ? "on" : "off");
         expect(identity.nativeModel).toBe(museModelRoute(m.id)?.modelId);
       } else expect(identity.responseModel).toBe("muse-spark-1.3-contributor");

@@ -45,6 +45,8 @@ function fixture(extra: Partial<MuseHostOptions> = {}, beforeOpen?: (f: ReturnTy
       for (const waiter of [...waits]) if (waiter.predicate(frame)) {
         waits.splice(waits.indexOf(waiter), 1); waiter.resolve(frame);
       }
+      // Real 1.4.14 answers the 1.4.15 session-MCP inventory query methodNotFound.
+      if (frame.method === "mcpServer/readInventory") { incoming.push({jsonrpc:"2.0",id:frame.id,error:{code:-32601,message:"method not found",data:{kind:"methodNotFound",retryable:false}}}); return; }
       if (frame.method === "session/start") {
         beforeOpen?.(result);
         reply(frame, { session: { sessionId: "server-session" }, viewCursor: "0" });
@@ -269,7 +271,7 @@ test("unexpected EOF and death discharge ephemeral lineage; orderly EOF suppress
 // HOME/XDG config/data/cache/state and launches only --provider echo.
 for (const contributorMode of ["on", "off"] as const) test(`real official echo transport; ${contributorMode} argv + isolated credential home + native terminal`, async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-muse-launch-test-"));
-  const binary = join(homedir(), ".local/bin/muse");
+  const binary = process.env.PI_MUSE_TETHER_BINARY ?? join(homedir(), ".local/bin/muse");
   const wrapper = join(dir, "official-muse-wrapper");
   const evidence = join(dir, "launch.json");
   await writeFile(wrapper, `#!/usr/bin/env python3\nimport os,sys,json\nwith open(${JSON.stringify(evidence)},'w') as f: json.dump({'argv':sys.argv[1:],'config':os.environ.get('XDG_CONFIG_HOME'),'home':os.environ.get('HOME'),'auto':os.environ.get('MUSE_NO_AUTO_UPDATE')},f)\nos.execv(${JSON.stringify(binary)},[${JSON.stringify(binary)}]+sys.argv[1:])\n`, { mode: 0o700 });
@@ -344,8 +346,10 @@ test("fixture wire retry and recommitted batch retain one dispatch before and af
   } finally {await f.host.close();}
 });
 
-test("catalogue effort guard refuses unsupported turns before submission, including a later turn", async () => {
-  const f = fixture({catalogueEfforts:["high"]});
+test("Spark 1.2 catalogue effort guard refuses unsupported turns before submission, including max on a later turn", async () => {
+  const catalog = JSON.parse(readFileSync(new URL("./fixtures/provider-catalog-window.json", import.meta.url), "utf8"));
+  const row = catalog.models.find((m: any) => m.modelId === "muse-spark-1.2");
+  const f = fixture({model:row.modelId, catalogueEfforts:row.variants});
   try {
     await f.host.open();
     await assert.rejects(f.host.submitInput("unsupported off", "none"), /absent from official model\/list/);

@@ -5,9 +5,10 @@ import { MuseLedger } from "./request-ledger.js";
 import type { TurnInputPart } from "./wire-types.js";
 import { homedir, tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { isAbsolute, join } from "node:path";
-import { writePromptSettings, promptSettings, discoverSkillsOff, linkHostLogin, assertLoginSafe, type SkillsOff } from "./settings.ts";
+import { writePromptSettings, privateWorkspace, promptSettings, discoverSkillsOff, linkHostLogin, assertLoginSafe, type SkillsOff } from "./settings.ts";
 import { writeFile } from "node:fs/promises";
 import {
   Connection, DiscardedSessions, MspError, Session, readSessionDurability,
@@ -15,6 +16,9 @@ import {
   type ApprovalHandler, type ExitClassification, type SessionFoldView,
   type SessionOptions, type SpawnMspConnectionOptions, type ViewEvent,
 } from "@muse-code/sdk";
+
+/** Inventory recheck pacing while Muse 1.4.15 starts session MCP (~200 ms measured). */
+const MCP_READY_RECHECK_MS = 25;
 
 type InitializeResult = Parameters<typeof readSessionDurability>[0];
 export type MuseApproval = Parameters<ApprovalHandler>[0];
@@ -54,6 +58,8 @@ export interface MuseHostOptions {
   onEvent?: (event: MuseHostEvent) => void;
   /** Stop an opening host when its Pi binding is retired. */
   signal?: AbortSignal;
+  /** Set by openMuseHost for private prompts: the empty trusted workspace. */
+  privateWorkspace?: string;
   /**
    * Required to allow anything. Must validate identity and reserve the exact
    * generation, session, turn, approvalId, toolCallId and rawArgs for the later
@@ -243,8 +249,9 @@ export class MuseHost {
         approvalMode: "promptUnmatched",
         ...(this.#options.model === undefined ? {} : { modelId: this.#options.model }),
         // Without workspaceRoot, serve silently ignored run.system_prompt in
-        // the live qualification. Explicit workspace construction is essential.
-        ...(this.#options.privatePrompt ? {workspaceRoot: this.#options.cwd} : {}),
+        // the live qualification. Explicit workspace construction is essential;
+        // the private trusted workspace keeps project rules out (settings.ts).
+        ...(this.#options.privatePrompt ? {workspaceRoot: this.#options.privateWorkspace ?? this.#options.cwd} : {}),
         config: { mcpServers: this.#options.mcpServers ?? {} },
       }, { maxAttempts: 1 }); // no engine retry/replay
       this.#assertLive();
@@ -278,6 +285,7 @@ export class MuseHost {
         if(!(typeof sub.subscriptionId==="number" && Number.isFinite(sub.subscriptionId)))throw new Error("Muse rawLog subscription absent");
         this.#logSubscription=sub.subscriptionId;
       }
+      await this.#awaitSessionMcp();
       // Entire drain is synchronous. A newly arriving event cannot overtake it.
       const held = this.#held;
       this.#held = [];
@@ -291,6 +299,47 @@ export class MuseHost {
     } finally {
       this.#opening = false;
       this.#held = []; // unrelated sessions never survive open settlement
+    }
+  }
+
+  /** Muse 1.4.15 starts session MCP servers after session/start returns, and
+   * a turn sent first fails "unknown tool" (measured 2026-11-10: "starting"
+   * with no tools, "connected" ~200 ms later). The client sends no readiness
+   * notification, so ask its inventory until every required server is
+   * connected with every Pi tool. No deadline: Pi's abort owns cancellation.
+   * 1.4.14 has no inventory method and was already ready at session/start. */
+  async #awaitSessionMcp() {
+    const names = Object.keys(this.#options.mcpServers ?? {});
+    for (;;) {
+      if (!names.length) return;
+      this.#assertLive();
+      this.#options.signal?.throwIfAborted();
+      let inventory: any;
+      try {
+        inventory = await (this.connection as any).request("mcpServer/readInventory", { sessionId: this.sessionId, includeTools: true });
+      } catch (error: any) {
+        // Only the typed old-client refusal skips readiness. experimentalRequired
+        // also uses -32601; a frame without data.kind is rejected by the SDK as
+        // ProtocolError (fail-closed), not evidence of an older client.
+        if (error?.kind === "methodNotFound" || error?.data?.kind === "methodNotFound") return;
+        throw error;
+      }
+      if (!Array.isArray(inventory?.servers)) throw new Error("Muse session MCP inventory malformed: servers must be an array");
+      const rows = names.map(name => ({ name, row: inventory.servers.find((s: any) => s?.name === name) }));
+      // Registration can be asynchronous: absent rows and starting are pending.
+      // 1.4.15 binary inventory labels include withheld and closed. These,
+      // explicit failures (failed/error/forfeited), and all unrecognized states
+      // fail closed, naming the state; only starting/absence are pending.
+      const failed = rows.find(({ row }) => row && row.state !== "starting" && row.state !== "connected");
+      if (failed) throw new Error(`Muse session MCP server ${failed.name} unavailable (${failed.row?.state ?? "absent"}); no model request submitted`);
+      if (rows.every(({ row }) => row?.state === "connected")) {
+        const pi = rows.find(({ name }) => name === "pi")?.row;
+        const missing = pi ? this.#options.tools.filter(tool => !(pi.tools as unknown[] | undefined)?.includes(tool)) : [];
+        if (missing.length) throw new Error(`Muse session MCP server pi connected without Pi tools ${missing.join(", ")}; no model request submitted`);
+        return;
+      }
+      // Recheck pacing only (not a deadline), well under the measured ~200 ms startup.
+      await delay(MCP_READY_RECHECK_MS, undefined, { signal: this.#options.signal });
     }
   }
 
@@ -574,7 +623,7 @@ export async function discoverMuseCatalog() {
   await qualifyMuseVersion(launch.command,launch.env??{});
   const handshake = spawnMspConnection(launch);
   try {
-    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.1.1" },
+    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.2.0" },
       capabilities: { requestedCapabilities: ["sessionMcp"], userInputDialogs: false } });
     const catalog = await spawned.connection.request("model/list", {});
     return catalog as typeof catalog & {models:any[]};
@@ -588,7 +637,9 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
   const launch = museLaunchOptions(options); // preflight BEFORE filesystem/process work
   options.signal?.throwIfAborted();
   await qualifyMuseVersion(launch.command, launch.env??{}, options.signal, options.toolBatches);
-  const home = await mkdtemp(join(tmpdir(), "pi-muse-host-"));
+  // Muse canonicalizes workspaceRoot before trust lookup (e.g. macOS /var).
+  // One canonical root owns settings, trust, auth link and raw/coding workspace.
+  const home = await realpath(await mkdtemp(join(tmpdir(), "pi-muse-host-")));
   const env = options.echo ? { ...launch.env,
     HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"),
     XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state") } : {
@@ -605,6 +656,7 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
   try {
     if (options.privatePrompt) {
       await writePromptSettings(home, options.privatePrompt.systemPrompt, options.tools, options.privatePrompt.skillsOff);
+      options = {...options, privateWorkspace: privateWorkspace(home)};
       if(!options.echo){
         const verify=await linkHostLogin(home,launch.env?.XDG_CONFIG_HOME??join(homedir(),".config"));
         verifyLogin=async()=>{
@@ -636,8 +688,8 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
     return {};
   });
   try {
-    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.1.1" },
-      capabilities: { requestedCapabilities: ["sessionMcp",...(options.toolBatches?["rawLog"]:[])], userInputDialogs: false, ...((options.privatePrompt||options.toolBatches)?{experimentalApi:true}:{}) } });
+    const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.2.0" },
+      capabilities: { requestedCapabilities: ["sessionMcp",...(options.toolBatches?["rawLog"]:[])], userInputDialogs: false, ...((options.privatePrompt||options.toolBatches||Object.keys(options.mcpServers??{}).length)?{experimentalApi:true}:{}) } });
     if(options.toolBatches && !spawned.initializeResult.grantedCapabilities.includes("rawLog"))throw new Error("Muse rawLog capability absent; parallel tools unsupported; no model request submitted");
     if (!options.echo) {
       const catalog = await spawned.connection.request("model/list", {});

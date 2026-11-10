@@ -41,6 +41,8 @@ async function fixture() {
   const reply=(f:any,result:any)=>incoming.push({jsonrpc:"2.0",id:f.id,result});
   connection=new Connection({incoming,async write(chunk:string){
    const f=JSON.parse(chunk),p=f.params??{};state.commands.push(f);
+      // Real 1.4.14 answers the 1.4.15 session-MCP inventory query methodNotFound.
+      if (f.method === "mcpServer/readInventory") { incoming.push({jsonrpc:"2.0",id:f.id,error:{code:-32601,message:"method not found",data:{kind:"methodNotFound",retryable:false}}}); return; }
    if(f.method==="session/start")reply(f,{session:{sessionId:"fixture"},viewCursor:"0"});
    else if(f.method==="log/streams")reply(f,{streams:[{stream:{kind:"session.live",id:"fixture"}}]});
    else if(f.method==="log/subscribe")reply(f,{subscriptionId:1});

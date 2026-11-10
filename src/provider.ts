@@ -441,13 +441,22 @@ function emitFrame(b: Binding, event: any) {
         throw new Error("Muse tool result receipt invocation differs from pending MCP call");
       let redactions: import("./tool-result-receipt.js").VendorRedaction[] = [];
       let images: import("./tool-result-receipt.js").UnverifiableImage[] = [];
-      const receipt = toolResultReceipt(item, r, stored, spans => { redactions = spans; }, declared => { images = declared; });
+      let truncatedView: import("./tool-result-receipt.js").TruncatedView | undefined;
+      const receipt = toolResultReceipt(item, r, stored, spans => { redactions = spans; }, declared => { images = declared; }, view => { truncatedView = view; });
       if (!b.bridge.verifyContent(pending.invocation, receipt))
         throw new Error("Muse tool result mismatch");
+      if (truncatedView) b.host?.ledger?.record("tool_result_truncated_view", {
+        callId:item.callId, piToolCallId:b.batchSpec?.find(c=>c.callId===item.callId)?.piCallId ?? pending.invocation.piCallId, itemId:item.itemId,
+        source:{tool:pending.invocation.name, piJournalEntryId:b.batchSpec?.find(c=>c.callId===item.callId)?.journal?.entryId},
+        outputRefAvailability:item.outputRef?.availability ?? "absent", view:truncatedView,
+        evidence:"declared-lossy-view", exactModelConsumption:false,
+      });
       if (redactions.length) {
         b.host?.ledger?.record("tool_result_vendor_redaction", {
-          callId: item.callId, itemId: item.itemId, count: redactions.length,
-          rule: "unique-nonempty-intraline-v3", spans: redactions, evidence:"declared-lossy",
+          callId: item.callId, piToolCallId: b.batchSpec?.find(c=>c.callId===item.callId)?.piCallId ?? pending.invocation.piCallId, itemId: item.itemId,
+          source: {tool:pending.invocation.name, piJournalEntryId:b.batchSpec?.find(c=>c.callId===item.callId)?.journal?.entryId,
+            ...(pending.invocation.name==="read" ? {path:pending.invocation.arguments.path} : {})}, count: redactions.length,
+          rule: "positional-declared-loss-v4", spans: redactions, evidence:"declared-lossy",
           textProjection: r.isError ? "lf-joined-all-text-parts" : images.length ? "native-ordered-parts-with-image-metadata" : "native-text-chunk-fold",
           exactModelConsumption: false,
         });
@@ -455,6 +464,8 @@ function emitFrame(b: Binding, event: any) {
       }
       if (images.length) b.host?.ledger?.record("tool_result_image_unverifiable", {
         callId: item.callId, piToolCallId: b.batchSpec?.find(c=>c.callId===item.callId)?.piCallId ?? pending.invocation.piCallId, itemId: item.itemId,
+        source: {tool:pending.invocation.name, piJournalEntryId:b.batchSpec?.find(c=>c.callId===item.callId)?.journal?.entryId,
+          ...(pending.invocation.name==="read" ? {path:pending.invocation.arguments.path} : {})},
         images:images.map(image=>({...image,modelVisibility:image.modelVisibility??"unproven"})), deliveredToMcp: true, evidence:"declared-lossy", unverifiableInContent: true,
         rule: "mcp-image-placeholder-v1", exactModelConsumption: false,
       });
@@ -464,17 +475,17 @@ function emitFrame(b: Binding, event: any) {
       if(spec)spec.verified=true;
       settleBatch(b);
     };
-    if (item.outputRef) {
+    if (item.outputRef && !(item.truncated === true && ["missing","unsupported","accessFailed"].includes(item.outputRef.availability))) {
       b.verifyingReceipt = readStoredToolOutput(item, offset => {
         if (!b.host?.readToolOutput) throw new Error("Muse host cannot read item/outputRef");
         return b.host.readToolOutput(item, offset);
-      }).then(verify).catch(error => { if (!b.closed) fail(b, `Muse tool result receipt: ${error.message}`); }).finally(() => {
+      }).then(verify).catch(error => { if (!b.closed) fail(b, `Muse tool result receipt (call ${item.callId}, item ${item.itemId}): ${error.message}`); }).finally(() => {
         b.verifyingReceipt=undefined;
         const events=b.buffered.splice(0);
         for(const next of events)emitFrame(b,next);
       });
     } else {
-      try { verify(); } catch(error:any) { fail(b, `Muse tool result receipt: ${error.message}`); }
+      try { verify(); } catch(error:any) { fail(b, `Muse tool result receipt (call ${item.callId}, item ${item.itemId}): ${error.message}`); }
     }
   }
 }
@@ -579,7 +590,7 @@ function flushTools(b: Binding) {
 /** Live inference is explicit opt-in; echo always launches the offline provider. */
 function streamEffective(model: any, input: any, options: any = {}) {
   if(config.modelAllowed && !config.modelAllowed(model)){
-    const refused=createAssistantMessageEventStream();const output=message(model);output.stopReason="error";output.errorMessage="Muse model is not qualified for Pi prompt/compaction; select a catalogue-registered Spark 1.3 contributor, Wonder or Wonder Full route";
+    const refused=createAssistantMessageEventStream();const output=message(model);output.stopReason="error";output.errorMessage="Muse model is not qualified for Pi prompt/compaction; select a catalogue-registered Muse route";
     refused.push({type:"error",reason:"error",error:output});refused.end();return refused;
   }
   const context = piContext(input);
@@ -925,7 +936,7 @@ function streamViaMuse(model:any,input:any,options:any={}) {
         throw new Error("Muse onPayload must return a logical request with systemPrompt, messages and tools");
       if(effective.messages.some((entry:any)=>entry?.role==="system"))
         throw new Error("Muse logical payload messages exclude system messages; edit logical systemPrompt and tools instead");
-      const request={...effective,tools:effective.tools.map((tool:any,index:number)=>index ? tool : ({...tool,description:`${tool.description??""}\n\nTransport notice: [REDACTED] in tool text can be official-client redaction; original bytes in those spans are unavailable. Tool images are delivered without pixel attestation; GIF/WebP visibility is unqualified. Images attached to failed tool results are omitted by the official client.`}))};
+      const request={...effective,tools:effective.tools.map((tool:any,index:number)=>index ? tool : ({...tool,description:`${tool.description??""}\n\nTransport notice: the official-client transcript view of a tool result may be truncated; full model consumption cannot be inferred from that view. [REDACTED] in tool text can be official-client redaction; original bytes in those spans are unavailable. Literal [REDACTED] may already be source text: a marker alone does not prove loss. The client may canonicalize bearer to Bearer immediately before a redaction. Tool images are delivered without pixel attestation; GIF/WebP visibility is unqualified. Images attached to failed tool results are omitted by the official client.`}))};
       for await(const event of streamEffective(model,request,options))stream.push(event);
       stream.end();
     } catch(error:any) {

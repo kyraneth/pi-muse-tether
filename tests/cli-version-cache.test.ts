@@ -17,7 +17,7 @@ it("caches successful version probes only for the unchanged launcher, selector, 
   await qualifyMuseVersion(launcher,env,undefined,true); expect(await count()).toBe(2);
   await writeFile(selector,"1.4.14-R7309.2\n"); await qualifyMuseVersion(launcher,env); expect(await count()).toBe(3);
   await writeFile(b,"changed active bytes"); await qualifyMuseVersion(launcher,env); expect(await count()).toBe(4);
-  await writeFile(launcher, '#!/bin/sh\necho x >> "$PROBE_LOG"\nprintf "Muse Code 9.9.9\\n"\n');
+  await writeFile(launcher, '#!/bin/sh\necho x >> "$PROBE_LOG"\nprintf "Muse Code 1.4.13\\n"\n');
   await expect(qualifyMuseVersion(launcher,env)).rejects.toThrow(/Unqualified/);
   await expect(qualifyMuseVersion(launcher,env)).rejects.toThrow(/Unqualified/);
   expect(await count()).toBe(6);

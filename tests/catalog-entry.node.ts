@@ -101,8 +101,10 @@ test("real Pi entry registers historical Spark metadata without a model request"
 });
 
 const current = JSON.parse(await readFile(join(here, "fixtures/provider-catalog-window.json"), "utf8"));
-for (const row of current.models.filter((m: any) => ["muse-spark-1.3", "muse-wonder-1.0", "muse-wonder-full-1.0"].includes(m.modelId))) {
-  for (const pickerId of row.modelId.includes("wonder") ? [row.modelId, `${row.modelId}-contributor`] : [row.modelId])
+// Unverified contributor support: normal registration stays fully dynamic.
+current.models.push({...current.models[0], modelId:"muse-ember-1.0", displayLabel:"Muse Ember"});
+for (const row of current.models) {
+  for (const pickerId of row.modelId === "muse-ember-1.0" ? [row.modelId] : [row.modelId, `${row.modelId}-contributor`])
   for (const effort of row.variants) test(`real Pi loader selects ${pickerId} at ${effort}, no inference`, async () => {
     const result = await entry(current, pickerId, effort);
     assert.equal(result.code, 0, result.stderr);
@@ -115,7 +117,7 @@ for (const row of current.models.filter((m: any) => ["muse-spark-1.3", "muse-won
     assert.equal(state.data.model.contextWindow, row.contextLimit);
     assert.equal(state.data.model.maxTokens, row.outputLimit);
     assert.equal(state.data.model.thinkingLevelMap.off, null);
-    if (row.modelId.includes("wonder")) {
+    if (row.modelId !== "muse-spark-1.3") {
       assert.deepEqual(state.data.model.cost, {input:null,output:null,cacheRead:null,cacheWrite:null});
       assert.match(state.data.model.name, /pricing unknown/);
     }

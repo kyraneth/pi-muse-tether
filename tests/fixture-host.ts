@@ -39,8 +39,17 @@ export async function openFixtureHost(options:MuseHostOptions):Promise<MuseHost>
  const notify=(method:string,params:any)=>incoming.push({jsonrpc:"2.0",method,params:{sessionId:id,sourceRange:{first:{id:`${id}-${turn}-${method}`,sequence:turn},last:{id:`${id}-${turn}-${method}`,sequence:turn},stream:{id,kind:"session"}},viewCursor:`${id}-${turn}-${method}`,...params}});
  const transport:any={incoming,async write(chunk:string){
   const f=JSON.parse(chunk),p=f.params??{};
-  if(f.method==="session/start")reply(f,{session:{sessionId:id,permissionState:{reviewerAuthority:fixtureState.reviewer??"human",profileId:":ask-me",reviewerAttached:true,axes:{approval:"onRequest",filesystem:"sandboxed",network:"off",reviewer:fixtureState.reviewer??"human"}}},viewCursor:"0"});
+  if(f.method==="session/start"){fixtureState.sessionStart=p;reply(f,{session:{sessionId:id,permissionState:{reviewerAuthority:fixtureState.reviewer??"human",profileId:":ask-me",reviewerAttached:true,axes:{approval:"onRequest",filesystem:"sandboxed",network:"off",reviewer:fixtureState.reviewer??"human"}}},viewCursor:"0"});}
   else if(f.method==="usage/read")reply(f,{usage:{}});
+  // 1.4.14 answers methodNotFound; a scripted 1.4.15 inventory sequence models
+  // asynchronous session MCP startup (last entry repeats).
+  else if(f.method==="mcpServer/readInventory"){
+   const seq=fixtureState.inventory;fixtureState.inventoryReads=(fixtureState.inventoryReads??0)+1;
+   fixtureState.onInventory?.();
+   if(fixtureState.inventoryError)incoming.push({jsonrpc:"2.0",id:f.id,error:fixtureState.inventoryError});
+   else if(!seq)incoming.push({jsonrpc:"2.0",id:f.id,error:{code:-32601,message:"method not found",data:{kind:"methodNotFound",retryable:false}}});
+   else reply(f,{servers:seq[Math.min(fixtureState.inventoryReads-1,seq.length-1)]});
+  }
   else if(f.method==="turn/cancel")reply(f,{commandId:p.commandId,status:"accepted"});
   else if(f.method==="turn/start"){
    turn++;await record({kind:"input",id,purpose,commandId:p.commandId,text:p.input[0].text});

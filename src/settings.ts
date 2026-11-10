@@ -68,10 +68,19 @@ export function promptSettings(systemPrompt: string, tools: readonly string[], s
     context: {foreign_personal_rules:false,foreign_personal_skills:false},
   };
 }
+/** The empty, tether-owned workspace a private-prompt session names. Muse
+ * honours run.system_prompt only with an explicit workspaceRoot, and Muse
+ * 1.4.15 starts session MCP only in a trusted workspace ("withheld"
+ * otherwise). Trusting the user's project would also load its rules files
+ * (AGENTS.md) into the model (measured 2026-11-10), so only this empty private
+ * directory is trusted. Pi still owns cwd and every tool path. */
+export const privateWorkspace = (hostRoot: string) => join(hostRoot, "workspace");
 /** Caller owns a unique host root; no shared mutable settings/schema or auth links. */
 export async function writePromptSettings(hostRoot: string, systemPrompt: string, tools: readonly string[], skillsOff?: SkillsOff) {
   const xdg = join(hostRoot,"config");
   await mkdir(join(xdg,"muse"),{recursive:true,mode:0o700});
+  await mkdir(privateWorkspace(hostRoot),{recursive:true,mode:0o700});
   await writeFile(join(xdg,"muse","settings.json"), JSON.stringify(promptSettings(systemPrompt,tools,skillsOff)),{mode:0o600,flag:"wx"});
+  await writeFile(join(xdg,"muse","trust.json"), JSON.stringify({schema_version:1,projects:{[privateWorkspace(hostRoot)]:{decision:"trusted"}}}),{mode:0o600,flag:"wx"});
   return xdg;
 }

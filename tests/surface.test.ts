@@ -49,14 +49,13 @@ const make = () =>
     },
   }) as any;
 describe("Muse surface contracts; no inference", () => {
-  it("qualifies only exact client and SDK, never forwards Meta key", () => {
+  it("requires the client floor and independently pinned SDK, never forwards Meta key", () => {
     expect(
       assertQualifiedVersions("Muse Code 1.4.14 (1.4.14-R7309.1)", "1.4.14"),
     ).toEqual({ client: "1.4.14", sdk: "1.4.14" });
     for (const version of [
       "Muse Code 1.4.13",
-      "Muse Code 1.4.15",
-      "Muse Code 1.4.140",
+      "Muse Code 1.4.0",
       "not Muse 1.4.14",
       "Muse Code 1.4.14 garbage",
     ])

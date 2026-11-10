@@ -2,7 +2,7 @@ import { museModelRoute } from "./model-route.js";
 import { assertLoginSafe } from "./settings.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { qualifyMuseVersion } from "./cli-version.js";
+import { qualifyMuseVersion, MIN_CLI_VERSION, TESTED_CLI_MAX, isNewerThanTestedCli, strictCliVersion } from "./cli-version.js";
 import { museLedgerPath } from "./request-ledger.js";
 import { MUSE_CACHE_POLICY } from "./cache-policy.js";
 /** Local diagnostic only: --version, no account/auth contents, quota or inference. */
@@ -18,9 +18,10 @@ export async function museDoctor(modelId?: string) {
         ok: true,
         binary,
         ...versions,
+        versionPolicy: {minimum:MIN_CLI_VERSION, testedMaximum:TESTED_CLI_MAX, newerThanTested:isNewerThanTestedCli(versions.client), strict:strictCliVersion()},
         contributorMode: modelId ? museModelRoute(modelId)?.contributorMode ?? null : null,
         apiKeyForwarded: false,
-        promptRecipe: "private-xdg-settings;explicit-workspaceRoot",
+        promptRecipe: "private-xdg-settings;private-trusted-workspaceRoot",
         ledger: museLedgerPath(),
         cache: MUSE_CACHE_POLICY,
         quota:
