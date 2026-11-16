@@ -87,7 +87,7 @@ export async function openFixtureHost(options:MuseHostOptions):Promise<MuseHost>
   }
  },close(){incoming.end();}};
  connection=new Connection(transport);
- const host=new MuseHost(connection,{sessionDurability:"ephemeral",grantedCapabilities:["sessionMcp"]} as any,options,async()=>{
+ const host=new MuseHost(connection,{sessionDurability:"ephemeral",grantedCapabilities:["sessionMcp"]} as any,{...options,echo:true},async()=>{
   if(purpose==="coding"&&fixtureState.codingCloseHold){fixtureState.codingCloseStarted?.();await fixtureState.codingCloseHold;}
   const item=fixtureState.opens.find((x:any)=>x.id===id);item.closed=true;
   const current=digest(await readFile(path));const currentSchema=schemaPath?await readFile(schemaPath).then(bytes=>digest(bytes)).catch((error:any)=>{if(error.code==='ENOENT')return 'retired-by-bridge';throw error;}):undefined;

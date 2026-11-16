@@ -1,6 +1,6 @@
 {
   "name": "pi-muse-tether",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Use your Muse Code subscription in Pi through the official client",
   "license": "MIT",
@@ -9,7 +9,7 @@
   "homepage": "https://github.com/kyraneth/pi-muse-tether#readme",
   "bugs": {"url": "https://github.com/kyraneth/pi-muse-tether/issues"},
   "engines": {"node": ">=24"},
-  "files": ["index.ts", "src/", "README.md", "CHANGELOG.md", "LICENSE", "assets/", "docs/DETAILS.md"],
+  "files": ["index.ts", "src/", "README.md", "CHANGELOG.md", "LICENSE", "assets/", "docs/DETAILS.md", "docs/CLIENT-LIFECYCLE.md", "docs/CLIENT-QUALIFICATION.md"],
   "dependencies": {
     "@muse-code/sdk": "1.4.14",
     "pi-tether-core": "0.1.1"
@@ -33,7 +33,9 @@
     "typescript": "^5"
   },
   "scripts": {
-    "test": "vitest run tests --exclude tests/host.test.ts --testTimeout=0 --hookTimeout=0 && node --import tsx --test tests/host.test.ts tests/catalog-entry.node.ts",
+    "test": "node scripts/test-guard.mjs",
+    "typecheck": "tsc --noEmit --target ES2023 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions --skipLibCheck index.ts src/*.ts",
+    "test:proof": "node scripts/test-guard.mjs --proof -- node --import tsx",
     "dev:install-core": "node scripts/install-core-main.mjs",
     "scan:public": "node scripts/check-public-tree.mjs",
     "export:manifest": "node scripts/export-manifest"

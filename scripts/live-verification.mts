@@ -37,6 +37,9 @@ const env: NodeJS.ProcessEnv = {
   PI_MUSE_TETHER_LIVE: offline ? "0" : "1",
   MUSE_NO_AUTO_UPDATE: "1",
   XDG_STATE_HOME: join(out, "state"),
+  XDG_DATA_HOME:join(out,"data"),
+  PI_MUSE_TETHER_QUALIFICATION_HOME:join(out,"qualifications"),
+  PI_MUSE_TETHER_PROOF_HOME:out,
   PI_CODING_AGENT_DIR: join(out, "pi-agent"),
 };
 process.env.PI_MUSE_TETHER_LIVE = offline ? "0" : "1";

@@ -87,12 +87,12 @@ async function fixture(mode="parallel") {
      notify("item/delta",{turnId,itemId:"text",field:"text",delta:"Partial truthful text"});
      if(state.commands.filter((x:any)=>x.method==="turn/start").length>1)notify("turn/completed",{turnId,terminal:"completed"});
     }
-    else if(["parallel","concurrent","tool","approval","no-batch","tool-errors","next-batch","vendor-tools"].includes(mode))void (async()=>{
+    else if(["parallel","concurrent","tool","approval","no-batch","lost-boundary","tool-errors","next-batch","vendor-tools"].includes(mode))void (async()=>{
      if(mode==="approval"){approval.resolve();await release.promise;if(options.signal.aborted)return;}
      const names=mode==="tool-errors"?["a","b","c","d"]:["parallel","concurrent","next-batch","vendor-tools"].includes(mode)?["a","b"]:["a"];
      const consumed=new Map(names.map(id=>[id,deferred()]));
-     const commit=(ids=names)=>frames.push({jsonrpc:"2.0",method:"log/record",params:{subscriptionId:1,record:{payload:{kind:"run",run_id:turnId,event:{kind:"assistant_tool_calls_committed",tool_calls:ids.map(id=>({call_id:id,name:"mcp__pi__lookup",args:JSON.stringify({key:id})}))}}}}});
-     if(mode!=="concurrent"&&mode!=="no-batch")commit(mode==="next-batch"?["a"]:names);
+     const commit=(ids=names)=>frames.push({jsonrpc:"2.0",method:"log/record",params:{subscriptionId:1,record:{schema_version:1,payload_schema_version:1,causation_id:null,durability:"ephemeral",id:`commit-${ids.join("-")}`,payload_type:"run.event",record_type:"event",recorded_at:0,sequence:1,stream:{kind:"session.live",id:"server-session"},payload:{kind:"run",run_id:turnId,event:{kind:"assistant_tool_calls_committed",tool_calls:ids.map(id=>({call_id:id,name:"mcp__pi__lookup",args:JSON.stringify({key:id})}))}}}}});
+     if(mode!=="concurrent"&&mode!=="no-batch"&&mode!=="lost-boundary")commit(mode==="next-batch"?["a"]:names);
      if(mode==="vendor-tools") {
       notify("turn/modelRetryScheduled",{...vendorRetry.retry.params,sessionId:"fixture",turnId});
       commit(); // Recommit while Pi still owns this batch.
@@ -476,14 +476,48 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
   expect(f.commands.filter((x:any)=>x.method==="turn/steer").map((x:any)=>x.params.input[0].text)).toEqual(["Tool-time steer"]);
   expect((agent.state.messages.at(-1) as any).stopReason).toBe("stop");
  });
- it("collects the complete committed parallel batch despite tool_started before tool_calls",async()=>{
+ it("finishes an already-surfaced batch when a gap degrades batching during Pi execution",async()=>{
+  const notice=vi.spyOn(console,"warn").mockImplementation(()=>{});
+  const f=await fixture("parallel");
+  const first=await f.provider.streamViaMuse(model,f.context([user])).result();
+  expect(first.stopReason).toBe("toolUse");await f.held.promise;
+  f.host.receive({method:"log/gap",params:{subscriptionId:1}});
+  const calls=first.content.filter((part:any)=>part.type==="toolCall");expect(calls).toHaveLength(2);
+  const results=calls.map(f.result);f.entries=results.map((message:any,index:number)=>({type:"message",id:`degraded-committed-${index}`,message}));
+  const final=await f.provider.streamViaMuse(model,f.context([user,first,...results])).result();
+  expect(final.stopReason,final.errorMessage).toBe("stop");expect(f.pending.sort()).toEqual(["a","b"]);
+  expect(notice.mock.calls.filter(([line])=>String(line).includes("using sequential tools"))).toHaveLength(1);
+  expect(f.commands.filter((command:any)=>command.method==="turn/start")).toHaveLength(1);
+ });
+ it("releases an already-held approval when its committed boundary is lost, then completes sequentially without replay",async()=>{
+  const notice=vi.spyOn(console,"warn").mockImplementation(()=>{});
+  const f=await fixture("lost-boundary");
+  const running=f.provider.streamViaMuse(model,f.context([user])).result();
+  await f.held.promise;
+  f.host.receive({method:"log/gap",params:{subscriptionId:1}});
+  const first=await running;expect(first.stopReason,first.errorMessage).toBe("toolUse");
+  const call=first.content.find((x:any)=>x.type==="toolCall"),result=f.result(call);
+  f.entries=[{type:"message",id:"lost-boundary-result",message:result}];
+  const final=await f.provider.streamViaMuse(model,f.context([user,first,result])).result();
+  expect(final.stopReason,final.errorMessage).toBe("stop");
+  expect(f.pending).toEqual(["a"]);
+  expect(notice.mock.calls.filter(([line])=>String(line).includes("using sequential tools"))).toHaveLength(1);
+  expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
+ });
+ it("degrades a missing pre-invocation batch boundary and serializes concurrent native calls without replay",async()=>{
+  const notice=vi.spyOn(console,"warn").mockImplementation(()=>{});
   const f=await fixture("concurrent");
   const first=await f.provider.streamViaMuse(model,f.context([user])).result();
   expect(first.stopReason).toBe("toolUse");
-  const calls=first.content.filter((x:any)=>x.type==="toolCall");expect(calls.map((c:any)=>c.arguments.key)).toEqual(["a","b"]);
-  const results=calls.map(f.result);f.entries=results.map((message:any,i:number)=>({type:"message",id:`journal-${i}`,message}));
-  const final=await f.provider.streamViaMuse(model,f.context([user,first,...results])).result();
-  expect(final.stopReason).toBe("stop");expect(f.pending.sort()).toEqual(["a","b"]);
+  const calls=first.content.filter((x:any)=>x.type==="toolCall");expect(calls.map((c:any)=>c.arguments.key)).toEqual(["a"]);
+  const resultA=f.result(calls[0]);f.entries=[{type:"message",id:"journal-a",message:resultA}];
+  const second=await f.provider.streamViaMuse(model,f.context([user,first,resultA])).result();
+  expect(second.stopReason,second.errorMessage).toBe("toolUse");
+  const callB=second.content.find((x:any)=>x.type==="toolCall");expect(callB.arguments.key).toBe("b");
+  const resultB=f.result(callB);f.entries.push({type:"message",id:"journal-b",message:resultB});
+  const final=await f.provider.streamViaMuse(model,f.context([user,first,resultA,second,resultB])).result();
+  expect(final.stopReason,final.errorMessage).toBe("stop");expect(f.pending.sort()).toEqual(["a","b"]);
+  expect(notice.mock.calls.filter(([line])=>String(line).includes("using sequential tools"))).toHaveLength(1);
   expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
   expect(f.commands.filter((c:any)=>c.method==="turn/steer")).toHaveLength(0);
  });
@@ -619,15 +653,16 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
    expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
   });
  }
- it("pins the experimental rawLog payload to the exact qualified client build",async()=>{
+ it("does not refuse an ordinary turn solely for an unknown experimental build",async()=>{
   const {assertQualifiedVersions}=await import("../src/cli-version.js");
-  expect(()=>assertQualifiedVersions("Muse Code 1.4.14 (1.4.14-R7309.1)","1.4.14",true)).not.toThrow();
+  expect(()=>assertQualifiedVersions("Muse Code 1.4.14 (1.4.14-R7309.1)","1.4.14")).not.toThrow();
   for(const output of ["Muse Code 1.4.14","Muse Code 1.4.14 (1.4.14-R7309.2)"])
-   expect(()=>assertQualifiedVersions(output,"1.4.14",true)).toThrow(/Unqualified/);
+   expect(()=>assertQualifiedVersions(output,"1.4.14")).not.toThrow();
  });
  it("rejects a missing rawLog grant before opening/submitting a model turn",async()=>{
   const {MuseHost}=await import("../src/host.js");const frames=new Frames();const connection=new Connection({incoming:frames,async write(){},close(){frames.end();}});
-  expect(()=>new MuseHost(connection,{sessionDurability:"ephemeral",grantedCapabilities:["sessionMcp"]} as any,{cwd:process.cwd(),tools:["lookup"],promptMode:"none",echo:true,toolBatches:true})).toThrow(/rawLog capability absent/);
+  const degraded=new MuseHost(connection,{sessionDurability:"ephemeral",grantedCapabilities:["sessionMcp"]} as any,{cwd:process.cwd(),tools:["lookup"],promptMode:"none",echo:true,toolBatches:true});
+  expect(degraded.batches).toBe(false);
   await connection.close();
  });
  for(const error of [{httpStatus:403},{data:{cause:{kind:"client_attestation_denied"}}},{message:"HTTP 403 account blocked"}]){

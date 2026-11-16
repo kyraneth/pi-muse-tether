@@ -6,8 +6,34 @@ import {fileURLToPath} from 'node:url';
 import {spawnMspConnection} from '@muse-code/sdk';
 import {museLaunchOptions,type MuseHostOptions} from '../src/host.ts';
 import {writePromptSettings} from '../src/settings.ts';
+import {setImmediate as yieldTurn} from 'node:timers/promises';
 
-// Runs the pinned official binary, NEVER a live provider. No real config/login.
+// Session MCP is asynchronous on current clients. A request before inventory
+// readiness can advertise an empty toolset or fail before model configuration.
+// Wait on the supported inventory boundary, not a sleep or build-string waiver.
+async function sessionMcpReady(connection:any,sessionId:string,tools:string[]) {
+ const states:string[]=[];
+ for (;;) {
+  let inventory:any;
+  try { inventory=await connection.request('mcpServer/readInventory',{sessionId,includeTools:true}); }
+  catch(error:any) {
+   if(error.kind==='methodNotFound'||error.data?.kind==='methodNotFound')return {states,inventoryUnsupported:true};
+   throw error;
+  }
+  if(!Array.isArray(inventory.servers))throw new Error('MCP inventory missing servers array');
+  const server=inventory.servers.find((entry:any)=>entry.name==='pi');
+  const state=server?.state??'pending registration';
+  if(states.at(-1)!==state)states.push(state); // Retain transitions, not repeated reads.
+  if(server?.state==='connected') {
+   expect([...(server.tools??[])].sort()).toEqual([...tools].sort());
+   return {states,inventoryUnsupported:false};
+  }
+  if(server&&server.state!=='starting')throw new Error(`MCP fixture unavailable: ${server.state}`);
+  await yieldTurn();
+ }
+}
+
+// Runs the official offline test binary, NEVER a live provider. No real config/login.
 // Echo rejects nonempty base instructions at session construction. This probe
 // uses an empty prompt; actual Pi prompt + live execution remain root-only.
 it('official echo: exact Pi-only named toolsets, no false read-only policy; flags reproduce defect',async()=>{
@@ -40,6 +66,7 @@ it('official echo: exact Pi-only named toolsets, no false read-only policy; flag
    const opened=await c.command('session/start',{workspaceRoot:cwd,approvalMode:'promptUnmatched',config:{mcpServers:
     row.tools.length?{pi:{transport:'stdio',command:'python3',args:[mcp,...(row.missing?[]:row.tools)],mode:'required'}}:{}}},{maxAttempts:1});
    const sessionId=opened.session.sessionId;
+   const readiness=row.tools.length?await sessionMcpReady(c,sessionId,row.missing?[]:row.tools):{states:[],inventoryUnsupported:false};
    await c.command('turn/start',{sessionId,input:[{type:'text',text:'Synthetic offline echo only.'}]},{maxAttempts:1});
    const end=await completed;
    const streams=await c.command('log/streams',{sessionId},{maxAttempts:1});
@@ -59,7 +86,8 @@ it('official echo: exact Pi-only named toolsets, no false read-only policy; flag
     console.log(JSON.stringify({row:row.name,terminal:end.terminal,officialConfiguredEvents:events.length,noDefaultFallback:true}));
     continue;
    }
-   expect(events.length,row.name+' official request boundary').toBeGreaterThan(0);
+   expect(end.terminal,row.name+' terminal '+JSON.stringify(end)).toBe('completed');
+   expect(events.length,row.name+' official request boundary after MCP readiness '+JSON.stringify(readiness)).toBeGreaterThan(0);
    for(const event of events){
     expect([...event.toolset.active_tools].sort(),row.name).toEqual(row.tools.map(n=>'mcp__pi__'+n).sort());
     const policy=event.run_context_messages.filter((m:any)=>m.source==='capability_policy'||m.id==='capability_policy');
@@ -72,10 +100,18 @@ it('official echo: exact Pi-only named toolsets, no false read-only policy; flag
      expect(JSON.stringify(event.run_context_messages)).not.toMatch(/Filesystem writes are disabled for this session|Shell execution is disabled for this session/);
     }
    }
-   console.log(JSON.stringify({row:row.name,activeTools:events[0].toolset.active_tools,capabilityPolicy:!!row.defect,officialBoundary:'model_request_configured'}));
+   console.log(JSON.stringify({row:row.name,activeTools:events[0].toolset.active_tools,capabilityPolicy:!!row.defect,officialBoundary:'model_request_configured',configuredEvents:events.length,mcpReadiness:readiness}));
   }finally{await handshake.close();}
  }}finally{await rm(root,{recursive:true,force:true});}
 },0); // Disable Vitest's default wall-clock limit for official process startup.
+
+it('waits through pending registration and starting before asserting configured toolsets',async()=>{
+ const states=[[],[{name:'pi',state:'starting',tools:[]}],[{name:'pi',state:'connected',tools:['write','read']}]];
+ const requests:string[]=[];
+ const readiness=await sessionMcpReady({async request(method:string){requests.push(method);return {servers:states.shift()};}},'offline-session',['read','write']);
+ expect(readiness).toEqual({states:['pending registration','starting','connected'],inventoryUnsupported:false});
+ expect(requests).toEqual(['mcpServer/readInventory','mcpServer/readInventory','mcpServer/readInventory']);
+});
 
 it('invalid/wildcard Pi names fail pre-spawn, never a native/default toolset fallback',()=>{
  for(const tools of [['*'],['bash*'],[''],['write','write']])expect(()=>museLaunchOptions({cwd:process.cwd(),tools,promptMode:'none',echo:true})).toThrow('distinct exact names');

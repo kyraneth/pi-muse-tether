@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Follow the official auto-updating Muse client; unknown builds run sequential Pi tools instead of refusing all turns. Parallel tools use qualification records, negotiated rawLog and runtime schema checks.
+- Add per-feature typed degradation/refusal, private-prompt append fallback and actionable catalogue-disabled diagnostics.
+- Add `/muse-doctor qualify [build] [--live]`, isolated conformance/explicit live suites and hash-bound qualification records.
+- Isolate Vitest, node:test and native proofs from production client/state/ledger; stamp ledger origin and package version; guard full test/proof runs with before/after hashes, including qualification records.
+- Wait for session-MCP readiness in official echo conformance before asserting request configuration. Run both test phases even if one fails, retaining per-test output; version-only diagnostic probes use temporary HOME/XDG roots.
+- Ledger origin/version stamps distinguish isolated tests from production observations; historical fixture counts are not evidence of production failures.
+
 ## 0.2.0
 
 - Long or redacted tool results no longer kill the turn: complete `[REDACTED]` lines and Muse's 64 KiB view truncation (including one-line results) are reconciled against Pi's original result. Unsupported vendor transformations still stop safely.

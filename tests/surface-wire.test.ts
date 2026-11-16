@@ -217,6 +217,6 @@ it("doctor remains local and reports unqualified client clearly without credenti
   await writeFile(binary, script("1.4.13"), { mode: 0o700 });
   expect(JSON.parse(await museDoctor()).error).toMatch(/Unqualified/);
   const commands = await readFile(log, "utf8");
-  expect(commands).toBe("--version \n--version \n--version \n--version \n");
+  expect(commands).toBe("--version \n--version \n--version \n--version \n--version \n--version \n");
   expect(commands).not.toContain("SET");
 });

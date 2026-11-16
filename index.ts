@@ -5,6 +5,8 @@ import { registerApiDispatch } from "pi-tether-core/register";
 import { streamViaMuse, retireAll, setSessionManager, rawCompletionQualified, committedCompaction } from "./src/provider.js";
 
 import { discoverMuseCatalog } from "./src/host.js";
+import { featureNotice } from "./src/features.js";
+import { clientStatus, clientBuildLabel } from "./src/qualification-records.js";
 import { museDoctor } from "./src/doctor.js";
 import { setQuotaListener, quotaStatusLine } from "./src/rate-limit.js";
 import { setRetryStatusListener } from "./src/retry-status.js";
@@ -59,8 +61,17 @@ export async function registerMuseExtension(pi: ExtensionAPI, provider = {stream
     catalogue = next;
     if (changed) registerProvider();
   });
-  pi.registerCommand("muse-doctor", {description:"Local Muse version, recipe and telemetry diagnostic (no model/account request)",handler:async(_args,ctx)=>{ctx.ui.notify(JSON.stringify({...JSON.parse(await museDoctor(ctx.model?.id)),catalogue:catalogue.diagnostics},null,2),"info");}});
+  pi.registerCommand("muse-doctor", {description:"Muse client and qualification diagnostic; qualify [build] [--live]",handler:async(args,ctx)=>{
+    if (args.split(/\s+/).includes("--live") && !await ctx.ui.confirm("Live Muse qualification", "Runs model requests (batch, private prompt, MCP, resume, image) in isolated state using your existing login. Proceed?")) return;
+    try { ctx.ui.notify(JSON.stringify({...JSON.parse(await museDoctor(ctx.model?.id, args)),catalogue:catalogue.diagnostics},null,2),"info"); }
+    catch(error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+  }});
   pi.on("session_start", async (_event, ctx) => {
+    if (process.env.PI_MUSE_TETHER_LIVE !== "1") ctx.ui.notify(featureNotice(clientBuildLabel(),"catalogue","PI_MUSE_TETHER_LIVE is unset","empty live catalogue; set PI_MUSE_TETHER_LIVE=1 to enable official discovery"),"warning");
+    if (process.env.PI_MUSE_TETHER_LIVE === "1") {
+      try { const status=clientStatus(false); ctx.ui.notify(`[pi-muse-tether] ${JSON.stringify(status)}; vendor updates are governed by capability/schema checks.`, "info"); }
+      catch(error) { ctx.ui.notify(String(error), "error"); }
+    }
     setQuotaListener(payload=>ctx.ui.setStatus("muse-rate-limit",quotaStatusLine(payload)));
     setRetryStatusListener(status=>ctx.ui.setStatus("muse-retry",status));
     await retireAll("session_start");

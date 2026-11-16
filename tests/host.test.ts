@@ -334,6 +334,11 @@ test("fixture wire retry and recommitted batch retain one dispatch before and af
   try {
     await f.host.open();const {turnId}=await f.host.submitInput("offline replay");
     const batch=structuredClone(wire.batch);batch.params.record.payload.run_id=turnId;
+    // This older anonymized fixture nested envelope metadata inside payload.
+    // Project its retained fields into the actual exported envelope contract;
+    // production never normalizes a malformed frame this way.
+    for (const key of ["payload_schema_version","payload_type","record_type","recorded_at","schema_version","sequence","stream"])
+      batch.params.record[key] ??= batch.params.record.payload[key];
     f.host.receive(batch);f.host.receive({...wire.retry,params:{...wire.retry.params,sessionId:"server-session",turnId}});
     f.host.receive(batch);
     assert.equal(f.host.fencedReason,undefined);
@@ -344,6 +349,21 @@ test("fixture wire retry and recommitted batch retain one dispatch before and af
     assert.equal(f.events.filter(e=>e.kind==="tool-batch").length,1);
     assert.equal(f.writes.filter(w=>w.method==="turn/start").length,1);
   } finally {await f.host.close();}
+});
+
+test("malformed batch schema and later gaps degrade once without refusing the turn", async () => {
+  const wire=JSON.parse(readFileSync(new URL("./fixtures/vendor-retry.json",import.meta.url),"utf8"));
+  const f=fixture({tools:["read"],toolBatches:true,clientBuild:"1.4.20-R8619.1"});
+  const original=console.warn, notices:string[]=[];console.warn=(message)=>notices.push(String(message));
+  try {
+    await f.host.open(); const {turnId}=await f.host.submitInput("offline malformed schema");
+    const malformed=structuredClone(wire.batch);malformed.params.record.payload.run_id=turnId;
+    f.host.receive(malformed);f.host.receive({method:"log/gap",params:{subscriptionId:1}});
+    assert.equal(f.host.batches,false);assert.equal(f.host.fencedReason,undefined);
+    assert.equal(notices.length,1);assert.match(notices[0],/MUSE_FEATURE_DEGRADED/);assert.match(notices[0],/1.4.20-R8619.1/);
+    f.host.receive(frame("turn/completed",{turnId,terminal:"completed"}));
+    assert.equal(f.events.filter(event=>event.kind==="terminal").length,1);
+  } finally { console.warn=original;await f.host.close(); }
 });
 
 test("Spark 1.2 catalogue effort guard refuses unsupported turns before submission, including max on a later turn", async () => {

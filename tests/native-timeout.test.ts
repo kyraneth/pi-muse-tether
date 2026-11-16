@@ -34,7 +34,12 @@ async function fixture() {
   if(f.params.sessionId)f.params.sessionId="fixture";
   if(f.params.turnId)f.params.turnId=turnId;
   if(f.params.item?.turnId)f.params.item.turnId=turnId;
-  if(f.params.record?.payload?.run_id)f.params.record.payload.run_id=turnId;
+  if(f.params.record?.payload?.run_id) {
+   f.params.record.payload.run_id=turnId;
+   // Older anonymization nested envelope metadata inside payload. Project it
+   // only in this fixture so the native batch lifecycle remains exercised.
+   for(const key of ["payload_schema_version","payload_type","record_type","recorded_at","schema_version","sequence","stream"])f.params.record[key]??=f.params.record.payload[key];
+  }
   incoming.push(f);
  };
  const provider=createMuseProvider({toolBatches:true,openHost:async options=>{
@@ -80,6 +85,7 @@ it("fixture native timeout fences immediately while Pi tool is still live, never
  f.emit("timedOut");
  // Resolve only from real Host/Connection ingress, with no sleep or authored deadline.
  await f.state.fenced.promise;
+ expect(f.host.batches).toBe(true);
  expect(f.host.fencedReason).toContain("Muse native tool timeout: mcp__pi__bash");
  expect(f.host.fencedReason).toContain("~300000 ms native elapsed");
  expect(f.state.runs).toEqual([JSON.parse(real.frames.commit.params.record.payload.event.tool_calls[0].args)]);

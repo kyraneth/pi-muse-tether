@@ -1,0 +1,202 @@
+{
+  "sources": [
+    {
+      "build": "v1414",
+      "sha256": "a9368639efe1dbd3a52d1816b99a36b7fd151088cdfbb2b5f0c4e2a3e7e9c50d"
+    },
+    {
+      "build": "v1415",
+      "sha256": "087aa69cf3f8b709ee97ba19f8583532400cbfe9013128a2da8d209359442172"
+    }
+  ],
+  "schemas": [
+    {
+      "$defs": {
+        "LogRecordParams": {
+          "properties": {
+            "record": {
+              "properties": {},
+              "type": "object"
+            },
+            "subscriptionId": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "record",
+            "subscriptionId"
+          ],
+          "type": "object",
+          "x-msp-descriptor": "log/record",
+          "x-msp-stability": "experimental"
+        },
+        "RawLogRecordEnvelope": {
+          "properties": {
+            "causation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "durability": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "payload": {
+              "properties": {},
+              "type": "object"
+            },
+            "payload_schema_version": {
+              "type": "integer"
+            },
+            "payload_type": {
+              "type": "string"
+            },
+            "record_type": {
+              "type": "string"
+            },
+            "recorded_at": {
+              "type": "integer"
+            },
+            "schema_version": {
+              "type": "integer"
+            },
+            "sequence": {
+              "type": "integer"
+            },
+            "stream": {
+              "$ref": "#/$defs/StreamRef"
+            }
+          },
+          "required": [
+            "causation_id",
+            "durability",
+            "id",
+            "payload",
+            "payload_schema_version",
+            "payload_type",
+            "record_type",
+            "recorded_at",
+            "schema_version",
+            "sequence",
+            "stream"
+          ],
+          "type": "object",
+          "x-msp-descriptor": "log/page",
+          "x-msp-stability": "experimental"
+        },
+        "StreamRef": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      }
+    },
+    {
+      "$defs": {
+        "LogRecordParams": {
+          "properties": {
+            "record": {
+              "properties": {},
+              "type": "object"
+            },
+            "subscriptionId": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "record",
+            "subscriptionId"
+          ],
+          "type": "object",
+          "x-msp-descriptor": "log/record",
+          "x-msp-stability": "experimental"
+        },
+        "RawLogRecordEnvelope": {
+          "properties": {
+            "causation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "durability": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "payload": {
+              "properties": {},
+              "type": "object"
+            },
+            "payload_schema_version": {
+              "type": "integer"
+            },
+            "payload_type": {
+              "type": "string"
+            },
+            "record_type": {
+              "type": "string"
+            },
+            "recorded_at": {
+              "type": "integer"
+            },
+            "schema_version": {
+              "type": "integer"
+            },
+            "sequence": {
+              "type": "integer"
+            },
+            "stream": {
+              "$ref": "#/$defs/StreamRef"
+            }
+          },
+          "required": [
+            "causation_id",
+            "durability",
+            "id",
+            "payload",
+            "payload_schema_version",
+            "payload_type",
+            "record_type",
+            "recorded_at",
+            "schema_version",
+            "sequence",
+            "stream"
+          ],
+          "type": "object",
+          "x-msp-descriptor": "log/page",
+          "x-msp-stability": "experimental"
+        },
+        "StreamRef": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  ]
+}

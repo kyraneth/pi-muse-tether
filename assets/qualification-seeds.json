@@ -1,0 +1,24 @@
+[
+  {
+    "build": "1.4.14-R7309.1",
+    "sha256": "0809aac7cb58d18f5022b6d05e02aa1974683c0ec430e5f04d25b60ed17de2da",
+    "schemaHash": "a9368639efe1dbd3a52d1816b99a36b7fd151088cdfbb2b5f0c4e2a3e7e9c50d",
+    "qualified": true,
+    "results": {
+      "legacy": true,
+      "source": "pre-existing live qualification, 2026-11-10 and original 1.4.14",
+      "sha256Coverage": "retained official bytes; matches retained offline-client manifest"
+    }
+  },
+  {
+    "build": "1.4.15-R8339.1",
+    "sha256": "abe0a72878c62b570c6eed6c17c5fc3c520a990ecf040511741c00092312a3d5",
+    "schemaHash": "087aa69cf3f8b709ee97ba19f8583532400cbfe9013128a2da8d209359442172",
+    "qualified": true,
+    "results": {
+      "legacy": true,
+      "source": "pre-existing live qualification, 2026-11-10 and original 1.4.14",
+      "sha256Coverage": "retained official bytes"
+    }
+  }
+]

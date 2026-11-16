@@ -30,7 +30,11 @@ async function fixture(mode='normal'){
   const frames=new Frames(),decisions=new Map<string,ReturnType<typeof deferred>>();
   const reply=(f:any,result:any)=>frames.push({jsonrpc:'2.0',id:f.id,result});
   const notify=(method:string,params:any)=>frames.push({jsonrpc:'2.0',method,params:{sessionId:'fixture',turnId,sourceRange:{first:{id:method,sequence:1},last:{id:method,sequence:1},stream:{kind:'session',id:'fixture'}},viewCursor:method,...params}});
-  const commit=(calls:any[])=>{state.batches.push(calls);const f=structuredClone(wire.frames.invalidCommit);f.params.record.payload.run_id=turnId;f.params.record.payload.event.tool_calls=calls;frames.push(f);};
+  const commit=(calls:any[])=>{state.batches.push(calls);const f=structuredClone(wire.frames.invalidCommit);f.params.record.payload.run_id=turnId;f.params.record.payload.event.tool_calls=calls;
+   // Project retained metadata omitted from this older anonymized envelope;
+   // preserve the original fixture, and keep this test on the actual batch path.
+   for(const key of ['payload_schema_version','payload_type','record_type','recorded_at','schema_version','sequence','stream'])f.params.record[key]??=f.params.record.payload[key];
+   frames.push(f);};
   const approve=(call:any)=>{const d=deferred();decisions.set(call.call_id,d);frames.push({jsonrpc:'2.0',id:call.call_id==='invalid'?101:102,method:'approval/request',params:{...wire.frames.invalidApproval.params,sessionId:'fixture',turnId,approvalId:call.call_id,itemId:call.call_id,taskId:call.call_id,toolCallId:call.call_id,toolName:call.name,rawArgs:call.args,subject:{kind:'tool',toolName:call.name},currentRequirementId:{approvalId:call.call_id,sourceIndex:0},availableChoices:[{choiceId:'allow_once',decision:'approved',scope:'once',label:'Allow once'},{choiceId:'abort',decision:'abort',scope:'once',label:'Reject'}]}});return d.promise;};
   const invoke=async(call:any)=>{
    const approved=await approve(call);state.decisions.push(approved);
@@ -71,7 +75,7 @@ async function fixture(mode='normal'){
 describe('Pi owns validation; real SDK, MCP and Pi agent boundary',()=>{
  it.each(['normal','mixed'])('returns actual validation error then coerces repair without changing native identity: %s',async mode=>{
   const f=await fixture(mode);await f.run();
-  expect(f.host().fencedReason).toBeUndefined();
+  expect(f.host().fencedReason).toBeUndefined();expect(f.host().batches).toBe(true);
   expect(f.state.decisions).toEqual(['allow_once','allow_once']);
   expect(f.state.runs).toEqual([{kind:'ok',count:7}]);
   const results=f.agent.state.messages.filter((m:any)=>m.role==='toolResult');

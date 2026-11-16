@@ -261,14 +261,28 @@ function fail(b: Binding, reason: string) {
   }
   void closeBinding(b);
 }
+const sequentialCalls = new WeakMap<Binding, BridgeInvocation[]>();
+const sequentialStarts = new WeakMap<Binding, Map<string,{itemId:string;turnId:string;recordedAt:string}>>();
 function settleBatch(b:Binding) {
   if (b.batchSpec?.every(c=>c.verified)) {
     b.batch=undefined; b.batchSpec=undefined; b.batchSurfaced=false;
     b.receiptsDone?.(); b.receiptsDone=undefined;
+    const next = sequentialCalls.get(b)?.shift();
+    if (next && !b.closed) surface(b, next);
   }
 }
 function emitFrame(b: Binding, event: any) {
   if (b.closed) return;
+  if (event.kind === "degraded" && event.feature === "rawLog") {
+    // An approval may already be waiting for a committed frame that was lost.
+    // Let its exact, validated MCP invocation enter the sequential queue; never
+    // wait for a Pi result whose tool has not been surfaced yet.
+    for (const [callId,hold] of b.approvalHolds) if (!hold.ready) {
+      hold.ready=true; hold.resolve();
+      b.host?.ledger?.record("tool_approval_released",{callId,reason:"rawLog degradation; sequential MCP ownership"});
+    }
+    return;
+  }
   if (
     event.kind === "frame" &&
     ["approval/request", "approval/requested", "approval/updated"].includes(
@@ -313,6 +327,14 @@ function emitFrame(b: Binding, event: any) {
   if(event.kind==="frame") {
     const {method,params:p={}}=event.frame,item=p.item;
     const spec=item?.kind==="toolCall" ? b.batchSpec?.find(c=>c.callId===item.callId && !c.verified) : undefined;
+    if (!spec && method === "item/started" && item?.kind === "toolCall") {
+      const reservation=b.reservations.get(item.callId);
+      if (reservation && item.tool === `mcp__pi__${reservation.name}`) {
+        const starts=sequentialStarts.get(b) ?? new Map();
+        starts.set(item.callId,{itemId:item.itemId,turnId:item.turnId,recordedAt:item.recordedAt});
+        sequentialStarts.set(b,starts);
+      }
+    }
     if(spec && (method==="item/started" || method==="item/completed" && item.status==="timedOut")) {
       try {
         if(item.tool!==spec.name || item.args!==undefined && canonical(JSON.parse(item.args))!==canonical(spec.args) ||
@@ -521,6 +543,15 @@ function surface(b: Binding, inv: BridgeInvocation) {
     fail(b, "Muse MCP invocation does not match a one-shot approval");
     throw new Error("Unapproved MCP invocation");
   }
+  if (b.host?.batches && !b.batchSpec) b.host.degradeBatches?.("rawLog batch boundary absent before MCP invocation");
+  const committedSpec=b.batchSpec?.find(spec=>spec.callId===callId);
+  if (!b.host?.batches && b.batch && !committedSpec) {
+    const queue = sequentialCalls.get(b) ?? [];
+    if (queue.some(previous => (previous.metadata as any)?.callId === callId)) {
+      fail(b, "Duplicate queued Muse invocation"); throw new Error("Duplicate invocation");
+    }
+    queue.push(inv); sequentialCalls.set(b, queue); return;
+  }
   b.reservations.delete(callId);
   b.approvalHolds.delete(callId); // Actual MCP invocation ends the approval handoff.
   if(b.batchSpec){
@@ -531,10 +562,13 @@ function surface(b: Binding, inv: BridgeInvocation) {
   }
   if(b.batchSpec?.find(c=>c.callId===callId)?.verified){fail(b,"Muse duplicate batch invocation");throw new Error("Duplicate invocation");}
   b.pending.set(callId, { invocation: inv, callId, verified: false });
-  if (!(config.toolBatches ?? true) || !b.host?.batches) {
+  if ((!(config.toolBatches ?? true) || !b.host?.batches) && !b.batchSpec) {
+    // A batch surfaced before degradation must finish under its existing spec.
+    // Only genuinely new calls enter the sequential ownership path.
     if(b.pending.size!==1){fail(b,"Concurrent Muse tools require committed batch capability");throw new Error("Missing tool batch");}
     b.batch=[callId];
-    b.batchSpec=[{callId,name:`mcp__pi__${inv.name}`,args:inv.arguments,piCallId:inv.piCallId}];
+    b.batchSpec=[{callId,name:`mcp__pi__${inv.name}`,args:inv.arguments,piCallId:inv.piCallId,nativeStart:sequentialStarts.get(b)?.get(callId)}];
+    sequentialStarts.get(b)?.delete(callId);
   }
   const spec=b.batchSpec?.find(c=>c.callId===callId);
   if(spec?.journal)deliverResult(b,spec);
@@ -877,7 +911,7 @@ function streamEffective(model: any, input: any, options: any = {}) {
           try {
             const args = JSON.parse(request.rawArgs);
             const spec=candidate.batchSpec?.find(c=>c.callId===request.toolCallId);
-            if(candidate.closed || (candidate.batchSpec && (!spec || spec.verified || spec.name!==request.toolName || canonical(spec.args)!==canonical(args))))return false;
+            if(candidate.closed || (spec && (spec.verified || spec.name!==request.toolName || canonical(spec.args)!==canonical(args))) || (candidate.host?.batches && candidate.batchSpec && !spec))return false;
             const previous = reservations.get(request.toolCallId);
             if (
               previous &&

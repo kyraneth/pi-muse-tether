@@ -1,20 +1,32 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { metadataLedger } from "pi-tether-core/metadata-ledger";
 import { nativeCounters } from "./usage.js";
 import { quotaPayload } from "./rate-limit.js";
+const packageVersion: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+function ledgerOrigin(): 'live' | 'test' | 'proof' {
+  if (process.env.VITEST || process.env.NODE_TEST_CONTEXT) return 'test';
+  const origin = process.env.PI_MUSE_TETHER_LEDGER_ORIGIN;
+  return origin === 'test' || origin === 'proof' ? origin : 'live';
+}
 const num = (v: any) =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 export function museLedgerPath() {
   const state = process.env.XDG_STATE_HOME;
   // XDG Base Directory requires absolute values; empty/relative values are
   // treated as unset, never a request to write metadata beneath the cwd.
-  return join(
+  const path = join(
     state && isAbsolute(state) ? state : join(homedir(), ".local/state"),
     "pi-muse-tether",
     "requests.jsonl",
   );
+  if (ledgerOrigin() !== 'live' && (!state || !isAbsolute(state) ||
+      resolve(path) === join(homedir(), '.local/state/pi-muse-tether/requests.jsonl'))) {
+    throw new Error('Test/proof request ledger requires an isolated absolute XDG_STATE_HOME; refusing the production ledger.');
+  }
+  return path;
 }
 let writer: ReturnType<typeof metadataLedger> | undefined, path: string;
 function append(row: any) {
@@ -55,6 +67,9 @@ export class MuseLedger {
       episodeId: this.episodeId,
       triggerMode: this.triggerMode,
       ...fields,
+      // Provenance is owned here; caller fields cannot masquerade as live traffic.
+      origin: ledgerOrigin(),
+      packageVersion,
     });
   }
   opened(id: string) {

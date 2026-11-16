@@ -2,7 +2,7 @@ import {it,expect,vi} from 'vitest';
 import {mkdtemp,realpath,symlink,readFile,rm,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-const observed=vi.hoisted(()=>({starts:[] as any[],capabilities:[] as any[],inventory:[] as any[],stopAtInitialize:false}));
+const observed=vi.hoisted(()=>({starts:[] as any[],capabilities:[] as any[],inventory:[] as any[],stopAtInitialize:false,privateUnavailable:false,settings:[] as any[]}));
 vi.mock('@muse-code/sdk',async(importOriginal)=>{
  const sdk=await importOriginal<any>();
  return {...sdk,spawnMspConnection:(launch:any)=>{
@@ -10,7 +10,10 @@ vi.mock('@muse-code/sdk',async(importOriginal)=>{
   h.initialize=async(params:any)=>{
    observed.capabilities.push(params.capabilities);
    if(observed.stopAtInitialize)throw new Error('initialize wiring observed');
-   const s=await initialize(params);const command=s.connection.command.bind(s.connection);
+   const s=await initialize(params);
+   observed.settings.push(JSON.parse(await readFile(join(launch.env.XDG_CONFIG_HOME,'muse/settings.json'),'utf8').catch(()=>'{"run":{}}')));
+   if(observed.privateUnavailable)s.initializeResult={...s.initializeResult,experimentalApi:false};
+   const command=s.connection.command.bind(s.connection);
    const request=s.connection.request.bind(s.connection);
    s.connection.request=async(method:string,p:any,...rest:any[])=>{
     const result=await request(method,p,...rest);
@@ -52,4 +55,18 @@ it('open path canonicalizes symlinked TMPDIR for trust and actual session/start 
    console.log('canonical offline proof',JSON.stringify({workspaceRoot:params.workspaceRoot,trust,inventory:observed.inventory}));
   }finally{await host.close();}
  }finally{if(old===undefined)delete process.env.TMPDIR;else process.env.TMPDIR=old;await rm(base,{recursive:true,force:true});}
+});
+it('private replacement unavailable reopens before any turn with supported appended developer instructions and one notice',async()=>{
+ observed.privateUnavailable=true;observed.settings=[];
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+ try {
+  const host=await openMuseHost({cwd:process.cwd(),tools:['read'],promptMode:'replace',privatePrompt:{systemPrompt:'EXACT_PI_PROMPT',skillsOff:{}},echo:true,binary:process.env.PI_MUSE_TETHER_BINARY});
+  try {
+   expect(observed.settings).toHaveLength(2);
+   expect(observed.settings[0].run.system_prompt).toBe('EXACT_PI_PROMPT');
+   expect(observed.settings[1].run.system_prompt).toBeUndefined();
+   expect(observed.settings[1].run.developer_prompt).toBe('EXACT_PI_PROMPT');
+   expect(warn.mock.calls.filter(([line])=>String(line).includes('"feature":"privatePrompt"'))).toHaveLength(1);
+  }finally{await host.close();}
+ }finally{observed.privateUnavailable=false;warn.mockRestore();}
 });

@@ -49,7 +49,7 @@ export async function discoverSkillsOff(binary:string, cwd:string, env:Record<st
   for(const row of rows){if(typeof row.scope!=="string"||typeof row.path!=="string")throw new Error("Muse skill inventory lacks scope/path");(off[row.scope]??={})[row.path]="off";}
   return off;
 }
-export function promptSettings(systemPrompt: string, tools: readonly string[], skillsOff: SkillsOff = {}) {
+export function promptSettings(systemPrompt: string, tools: readonly string[], skillsOff: SkillsOff = {}, delivery: "replace" | "append" = "replace") {
   if (typeof systemPrompt !== "string") throw new Error("Pi system prompt must be exact text");
   return {
     schema_version: 1,
@@ -57,7 +57,7 @@ export function promptSettings(systemPrompt: string, tools: readonly string[], s
     // Muse's auto-review judge from clearing a call before Pi reserves it.
     permissions: {schema_version:1,default_profile:":ask-me"},
     run: {
-      system_prompt: systemPrompt,
+      ...(delivery === "replace" ? {system_prompt:systemPrompt} : {developer_prompt:systemPrompt}),
       toolset: tools.map(name => `mcp__pi__${name}`),
       workflow_trigger_mode: "off",
       context_usage_message_enabled: false,
@@ -76,11 +76,11 @@ export function promptSettings(systemPrompt: string, tools: readonly string[], s
  * directory is trusted. Pi still owns cwd and every tool path. */
 export const privateWorkspace = (hostRoot: string) => join(hostRoot, "workspace");
 /** Caller owns a unique host root; no shared mutable settings/schema or auth links. */
-export async function writePromptSettings(hostRoot: string, systemPrompt: string, tools: readonly string[], skillsOff?: SkillsOff) {
+export async function writePromptSettings(hostRoot: string, systemPrompt: string, tools: readonly string[], skillsOff?: SkillsOff, delivery: "replace" | "append" = "replace") {
   const xdg = join(hostRoot,"config");
   await mkdir(join(xdg,"muse"),{recursive:true,mode:0o700});
   await mkdir(privateWorkspace(hostRoot),{recursive:true,mode:0o700});
-  await writeFile(join(xdg,"muse","settings.json"), JSON.stringify(promptSettings(systemPrompt,tools,skillsOff)),{mode:0o600,flag:"wx"});
+  await writeFile(join(xdg,"muse","settings.json"), JSON.stringify(promptSettings(systemPrompt,tools,skillsOff,delivery)),{mode:0o600,flag:"wx"});
   await writeFile(join(xdg,"muse","trust.json"), JSON.stringify({schema_version:1,projects:{[privateWorkspace(hostRoot)]:{decision:"trusted"}}}),{mode:0o600,flag:"wx"});
   return xdg;
 }

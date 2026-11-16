@@ -24,7 +24,7 @@ export function museCatalogAssessment(catalog: any) {
     Number.isSafeInteger(m.outputLimit) && m.outputLimit > 0 &&
     Array.isArray(m.variants) && m.variants.length &&
     m.variants.every((tier: unknown) => typeof tier === "string" &&
-      Object.values(museThinkingLevelMap([tier])).includes(tier)) &&
+      Object.values(museThinkingLevelMap([tier])).some(value => value === tier)) &&
     m.variants.includes(m.defaultReasoningEffort));
   return { valid, diagnostics: { source: catalog?.source ?? null, providerId: catalog?.providerId ?? null,
     profileId: catalog?.profileId ?? null,

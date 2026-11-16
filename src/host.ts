@@ -1,3 +1,6 @@
+import { resolveMuseBinary, batchEligibility, clientBuildLabel } from "./qualification-records.js";
+import { featureNotice, featureActive, MuseFeatureUnavailable } from "./features.js";
+import { committedCalls } from "./batch-schema.js";
 import { qualifyMuseVersion } from "./cli-version.js";
 import { museEffort } from "./thinking-config.js";
 import { publishQuota, quotaExhausted } from "./rate-limit.js";
@@ -27,6 +30,7 @@ export type MuseHostEvent =
   | { kind: "frame"; frame: MuseFrame }
   | { kind: "terminal"; turnId: string; status: "completed" | "cancelled" | "failed"; frame: MuseFrame; lastRetryHttpStatus?: number }
   | { kind: "fenced"; reason: string }
+  | { kind: "degraded"; feature: "rawLog"; reason: string }
   | { kind: "tool-batch"; calls: Array<{callId:string;name:string;args:Record<string,unknown>}> }
   | { kind: "auth-metadata"; metadata: unknown }; 
 
@@ -34,6 +38,9 @@ export interface MuseHostOptions {
   cwd: string;
   /** Requires the pinned experimental rawLog batch boundary; never timing heuristics. */
   toolBatches?: boolean;
+  /** Only the explicitly isolated, opt-in qualifier can probe before certification. */
+  qualificationProbe?: boolean;
+  clientBuild?: string;
   purpose?: "coding" | "raw";
   piSessionId?: string;
   reasoningEffort?: ReturnType<typeof museEffort>;
@@ -90,6 +97,16 @@ export function policyDenial(error: unknown, seen=new Set<unknown>()): boolean {
   return [value.data, value.error, value.cause].some((nested) => nested !== error && policyDenial(nested, seen));
 }
 
+export class MuseUpgradeRequired extends Error {
+  readonly code = "MUSE_UPGRADE_REQUIRED";
+  constructor(readonly build: string) { super(`MUSE_UPGRADE_REQUIRED: Meta requires a newer official client than ${build}; update through Meta's launcher, then run /muse-doctor qualify. No fallback or replay.`); }
+}
+export function serverRequiresUpgrade(error: unknown, seen = new Set<unknown>()): boolean {
+  if (!error || typeof error !== "object" || seen.has(error)) return false;
+  seen.add(error); const value=error as Record<string,unknown>;
+  if ([value.status,value.httpStatus,value.code].includes(426) || [value.kind,value.errorKind,value.code].some(v => typeof v === "string" && /^(upgrade_required|client_version_unsupported|minimum_client_version|client_upgrade_required)$/.test(v))) return true;
+  return [value.error,value.data,value.cause].some(nested => serverRequiresUpgrade(nested,seen));
+}
 function quotaDenial(error: unknown, seen = new Set<unknown>()): boolean {
   if (!error || typeof error !== "object" || seen.has(error)) return false;
   seen.add(error);
@@ -108,10 +125,11 @@ function validateOptions(options: MuseHostOptions): void {
   if (options.contributorMode !== undefined && !["on","off"].includes(options.contributorMode))
     throw new Error("Muse contributor mode must be on or off");
   const candidate = options.privatePrompt !== undefined && options.promptMode === "replace";
-  if (options.privatePrompt && !candidate) throw new Error("Muse private prompt settings require replace mode");
+  const appended = options.privatePrompt !== undefined && options.promptMode === "append";
+  if (options.privatePrompt && !candidate && !appended) throw new Error("Muse private prompt settings require replace or appended fallback mode");
   if (!options.echo) assertLoginSafe();
-  if (options.promptMode !== "none" && !candidate) throw new Error("Muse prompt mode unsupported: no qualified instruction isolation");
-  if (options.tools.length === 0 && !(options.purpose === "raw" && candidate)) throw new Error("Muse tools-empty/raw completion unsupported");
+  if (options.promptMode !== "none" && !candidate && !appended) throw new Error("Muse prompt mode unsupported: no instruction mechanism");
+  if (options.tools.length === 0 && !(options.purpose === "raw" && (candidate || appended))) throw new Error("Muse tools-empty/raw completion unsupported");
   if (options.purpose === "raw" && (options.tools.length || Object.keys(options.mcpServers ?? {}).length)) throw new Error("Muse raw completion must have no tools or MCP servers");
   if (Object.values(options.mcpServers ?? {}).some((server:any)=>server.mode !== undefined && server.mode !== "required")) throw new Error("Muse Pi MCP servers must be required; no optional fallback");
   if (options.echo !== true && process.env.PI_MUSE_TETHER_LIVE !== "1") throw new Error("Live Muse requires explicit PI_MUSE_TETHER_LIVE=1");
@@ -123,7 +141,7 @@ function validateOptions(options: MuseHostOptions): void {
 /** Supported official flags only; no config mutation, trust, login or credential I/O. */
 export function museLaunchOptions(options: MuseHostOptions): SpawnMspConnectionOptions {
   validateOptions(options);
-  const command = options.binary ?? process.env.PI_MUSE_TETHER_BINARY ?? join(homedir(), ".local/bin/muse");
+  const command = options.binary ?? resolveMuseBinary();
   if (!isAbsolute(command)) throw new Error("Muse binary must be absolute");
   return {
     command,
@@ -135,7 +153,7 @@ export function museLaunchOptions(options: MuseHostOptions): SpawnMspConnectionO
       "--config", `run.toolset=${JSON.stringify(options.tools.map(name => `mcp__pi__${name}`))}`,
       "--disable-request-user-input", ...(options.echo ? ["--provider", "echo"] : [])],
     cwd: options.cwd,
-    env: Object.fromEntries(Object.entries({ ...process.env, MUSE_NO_AUTO_UPDATE: "1" }).filter(([key]) => options.echo
+    env: Object.fromEntries(Object.entries({ ...process.env }).filter(([key]) => options.echo
       ? ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "MUSE_NO_AUTO_UPDATE", "MUSE_WIRE_DIR", "MUSE_TRANSPORT_TRACE"].includes(key)
       : !["META_API_KEY", "MUSE_CONTRIBUTOR_MODE"].includes(key))),
     // No tether workload timeout: SDK SS2.1.2 owns the default 30s close deadline.
@@ -198,8 +216,12 @@ export class MuseHost {
     this.#tools = new Set(options.tools.map((name) => `mcp__pi__${name}`));
     this.#durability = readSessionDurability(initialized);
     if (this.#durability.kind !== "ephemeral") throw new Error("Muse requires declared ephemeral session durability");
-    if (!initialized.grantedCapabilities.includes("sessionMcp")) throw new Error("Muse did not grant sessionMcp");
-    if(options.toolBatches && !initialized.grantedCapabilities.includes("rawLog"))throw new Error("Muse rawLog capability absent; parallel tools unsupported");
+    if (!initialized.grantedCapabilities.includes("sessionMcp")) throw new MuseFeatureUnavailable(options.clientBuild ?? "unknown build","sessionMcp","initialize did not grant session MCP");
+    featureActive(options.clientBuild ?? "unknown build","sessionMcp");
+    if(options.toolBatches && !initialized.grantedCapabilities.includes("rawLog")) {
+      this.#options.toolBatches=false;
+      this.degradeBatches("rawLog not granted");
+    }
     connection.onNotification((frame) => this.receive(frame as MuseFrame));
     connection.onServerRequest(async (request) => {
       if (request.method === "approval/request" || request.method === "userInput/request") {
@@ -220,6 +242,15 @@ export class MuseHost {
   get sessionId(): string { if (!this.#session) throw new Error("Muse session not open"); return this.#session.sessionId; }
   get view(): SessionFoldView { if (!this.#session) throw new Error("Muse session not open"); return this.#session.fold; }
   get fencedReason(): string | undefined { return this.#reason; }
+  #degradedNotice = false;
+  degradeBatches(reason: string) {
+    this.#options.toolBatches=false;
+    if (!this.#degradedNotice) {
+      this.#degradedNotice=true;
+      console.warn(featureNotice(this.#options.clientBuild ?? "unknown build","rawLog",reason,"using sequential tools (no replay)"));
+      this.#emit({kind:"degraded",feature:"rawLog",reason});
+    }
+  }
   get batches(): boolean { return this.#options.toolBatches === true; }
   /** Official read-only byte-ranged output API; no filesystem/path fallback. */
   async readToolOutput(item: { itemId: string; outputRef: { id: string } }, offsetBytes: number) {
@@ -230,6 +261,10 @@ export class MuseHost {
   /** SDK Connection.command's documented nothing-admitted overload classes. */
   get retrySafe(): boolean { return this.#retrySafe; }
   #refusal(error:unknown) {
+    if (serverRequiresUpgrade(error)) {
+      const build = this.#options.clientBuild ?? clientBuildLabel(this.#options.binary ?? process.env.PI_MUSE_TETHER_BINARY);
+      this.fence(new MuseUpgradeRequired(build).message); return true;
+    }
     if(!policyDenial(error))return false;
     policyLatch="Muse nonretryable provider refusal latched; account-owner review required";
     this.fence(policyLatch);return true;
@@ -258,7 +293,7 @@ export class MuseHost {
       const result = raw as unknown as Extract<NonNullable<SessionOptions["opening"]>, { verb: "session/start" }>["result"];
       if (typeof result.session?.sessionId !== "string") throw new Error("Invalid Muse session/start result");
       if(this.#options.privatePrompt && (result.session as any).permissionState?.reviewerAuthority!=="human")
-        throw new Error("Muse private recipe requires verified human reviewer; no model request submitted");
+        throw new MuseFeatureUnavailable(this.#options.clientBuild ?? "unknown build","sessionMcp","Private tool recipe lacks verified human reviewer; Pi cannot safely own approvals");
       this.#session = this.makeSession({ sessionId: result.session.sessionId, durability: this.#durability,
         discarded: this.#discarded, connection: this.connection, opening: { verb: "session/start", result } });
       this.ledger.opened(this.#session.sessionId);
@@ -277,15 +312,22 @@ export class MuseHost {
         return this.#decide(request);
       });
       this.#session.onApprovalError((error) => { if(!this.#refusal(error))this.fence("Muse approval round trip failed"); });
-      if(this.batches) {
+      if(this.batches) { try {
         const streams=await this.connection.command("log/streams",{sessionId:this.sessionId},{maxAttempts:1});
         const stream=(streams.streams as any[])?.map(s=>s.stream).find(s=>s?.kind==="session.live" && s.id===this.sessionId);
         if(!stream)throw new Error("Muse rawLog session stream absent; parallel tools unsupported");
         const sub=await this.connection.command("log/subscribe",{sessionId:this.sessionId,stream},{maxAttempts:1});
         if(!(typeof sub.subscriptionId==="number" && Number.isFinite(sub.subscriptionId)))throw new Error("Muse rawLog subscription absent");
         this.#logSubscription=sub.subscriptionId;
+      } catch (error) {
+        if (policyDenial(error)) throw error;
+        this.degradeBatches("rawLog schema/subscription unavailable");
+      } }
+      try { await this.#awaitSessionMcp(); }
+      catch(error) {
+        if (this.#options.signal?.aborted || policyDenial(error)) throw error;
+        throw new MuseFeatureUnavailable(this.#options.clientBuild ?? "unknown build","sessionMcp",error instanceof Error ? error.message : String(error));
       }
-      await this.#awaitSessionMcp();
       // Entire drain is synchronous. A newly arriving event cannot overtake it.
       const held = this.#held;
       this.#held = [];
@@ -345,15 +387,15 @@ export class MuseHost {
 
   /** The single ingress, also used by synthetic frame fixtures. */
   receive(frame: MuseFrame): void {
-    if(frame.method==="log/gap" && (frame.params as any)?.subscriptionId===this.#logSubscription){this.fence("Muse rawLog gap; complete tool batch unknown");return;}
+    if(frame.method==="log/gap" && (frame.params as any)?.subscriptionId===this.#logSubscription){this.degradeBatches("rawLog gap");return;}
     if(frame.method==="log/record") {
       const p=frame.params as any;
       if(this.#logSubscription===undefined || p?.subscriptionId!==this.#logSubscription || this.#reason || this.#dead)return;
       const payload=p.record?.payload, event=payload?.event;
-      if(payload?.kind==="run" && event?.kind==="assistant_tool_calls_committed") {
+      if(this.batches && payload?.kind==="run" && event?.kind==="assistant_tool_calls_committed") {
         if(!this.#busy || payload.run_id!==this.#submission?.turnId){this.fence("Muse committed tool batch has foreign turn identity");return;}
         try {
-          const calls=event.tool_calls.map((c:any)=>({callId:c.call_id,name:c.name,args:typeof c.args==="string"?JSON.parse(c.args):c.args}));
+          const calls=committedCalls(p);
           if(!calls.length || calls.some((c:any)=>typeof c.callId!=="string"||!this.#tools.has(c.name)||!c.args||typeof c.args!=="object"||Array.isArray(c.args)))throw new Error("Malformed committed tool batch");
           const signatures=calls.map((c:any)=>JSON.stringify([c.callId,c.name,canonical(c.args)]));
           const batch=JSON.stringify(signatures);
@@ -364,7 +406,9 @@ export class MuseHost {
           calls.forEach((c:any,i:number)=>this.#committedCalls.set(c.callId,signatures[i]));
           this.#committedBatches.add(batch);
           this.#emit({kind:"tool-batch",calls});
-        }catch{this.fence("Muse malformed committed tool batch");}
+        }catch{
+          this.degradeBatches("Batch schema mismatch");
+        }
       }
       return;
     }
@@ -389,9 +433,9 @@ export class MuseHost {
     const retry=["turn/retryScheduled","turn/modelRetryScheduled"].includes(frame.method);
     if(retry)this.ledger.observe(frame); // Includes refused retries, before any latch.
     // Only protocol error fields count; model/user/tool text is never scanned.
-    if(policyDenial(params.error) || (["turn/retryScheduled","turn/modelRetryScheduled"].includes(frame.method) && policyDenial(params))){
+    if(serverRequiresUpgrade(params.error) || (retry && serverRequiresUpgrade(params)) || policyDenial(params.error) || (["turn/retryScheduled","turn/modelRetryScheduled"].includes(frame.method) && policyDenial(params))){
       this.#emit({kind:"frame",frame});
-      this.#refusal(policyDenial(params.error) ? params.error : params);return;
+      this.#refusal(policyDenial(params.error) || serverRequiresUpgrade(params.error) ? params.error : params);return;
     }
     if (quotaDenial(params.error) || (retry && quotaDenial(params))) {
       this.#emit({kind:"frame",frame});
@@ -634,9 +678,19 @@ export async function discoverMuseCatalog() {
 }
 
 export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> {
-  const launch = museLaunchOptions(options); // preflight BEFORE filesystem/process work
+  let launch = museLaunchOptions(options); // preflight BEFORE filesystem/process work
+  options = {...options, binary:launch.command, clientBuild:clientBuildLabel(launch.command)};
   options.signal?.throwIfAborted();
-  await qualifyMuseVersion(launch.command, launch.env??{}, options.signal, options.toolBatches);
+  await qualifyMuseVersion(launch.command, launch.env??{}, options.signal);
+  options={...options,clientBuild:clientBuildLabel(launch.command)};
+  if (options.qualificationProbe && !process.env.PI_MUSE_TETHER_QUALIFICATION_REAL_CONFIG) throw new Error("Qualification probe requires the isolated opt-in worker");
+  let batchReason:string|undefined;
+  if (options.toolBatches && !options.echo && !options.qualificationProbe) {
+    let eligible;
+    try { eligible=batchEligibility(launch.command); } catch { eligible={qualified:false,reason:"Qualification schema/identity check unavailable"}; }
+    if (!eligible.qualified) { batchReason=eligible.reason; options={...options,toolBatches:false}; }
+  }
+  if (!options.toolBatches && !options.echo) launch = {...launch, args:[...(launch.args ?? []), "--config", "run.parallel_tool_calls=false"]};
   // Muse canonicalizes workspaceRoot before trust lookup (e.g. macOS /var).
   // One canonical root owns settings, trust, auth link and raw/coding workspace.
   const home = await realpath(await mkdtemp(join(tmpdir(), "pi-muse-host-")));
@@ -655,7 +709,7 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
   };
   try {
     if (options.privatePrompt) {
-      await writePromptSettings(home, options.privatePrompt.systemPrompt, options.tools, options.privatePrompt.skillsOff);
+      await writePromptSettings(home, options.privatePrompt.systemPrompt, options.tools, options.privatePrompt.skillsOff, options.promptMode === "append" ? "append" : "replace");
       options = {...options, privateWorkspace: privateWorkspace(home)};
       if(!options.echo){
         const verify=await linkHostLogin(home,launch.env?.XDG_CONFIG_HOME??join(homedir(),".config"));
@@ -669,7 +723,7 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
       const skills=options.privatePrompt.skillsOff??await discoverSkillsOff(launch.command,options.cwd,env);
       // Inventory is finished before the model host starts. Only this generation
       // can see this settings path; auxiliary summaries stage their own files.
-      await writeFile(join(home,"config/muse/settings.json"),JSON.stringify(promptSettings(options.privatePrompt.systemPrompt,options.tools,skills)),{mode:0o600});
+      await writeFile(join(home,"config/muse/settings.json"),JSON.stringify(promptSettings(options.privatePrompt.systemPrompt,options.tools,skills,options.promptMode === "append" ? "append" : "replace")),{mode:0o600});
     }
   } catch (error) { await cleanup(); throw error; }
   const handshake = spawnMspConnection({ ...launch, env });
@@ -690,7 +744,17 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
   try {
     const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.2.0" },
       capabilities: { requestedCapabilities: ["sessionMcp",...(options.toolBatches?["rawLog"]:[])], userInputDialogs: false, ...((options.privatePrompt||options.toolBatches||Object.keys(options.mcpServers??{}).length)?{experimentalApi:true}:{}) } });
-    if(options.toolBatches && !spawned.initializeResult.grantedCapabilities.includes("rawLog"))throw new Error("Muse rawLog capability absent; parallel tools unsupported; no model request submitted");
+    if (options.privatePrompt && options.promptMode === "replace" && spawned.initializeResult.experimentalApi === false) {
+      await spawned.close(); await cleanup();
+      console.warn(featureNotice(options.clientBuild ?? "unknown build","privatePrompt","experimental private replacement not negotiated","Pi prompt appended through supported run.developer_prompt, not replacing Muse instructions"));
+      return openMuseHost({...options,promptMode:"append"});
+    }
+    if (options.privatePrompt && options.promptMode === "replace") featureActive(options.clientBuild ?? "unknown build","privatePrompt");
+    if (!spawned.initializeResult.grantedCapabilities.includes("sessionMcp")) throw new MuseFeatureUnavailable(options.clientBuild ?? "unknown build","sessionMcp","initialize did not grant session MCP");
+    if(options.toolBatches && !spawned.initializeResult.grantedCapabilities.includes("rawLog")) {
+      batchReason="rawLog not granted";
+      options = {...options, toolBatches:false};
+    }
     if (!options.echo) {
       const catalog = await spawned.connection.request("model/list", {});
       const selected = (catalog.models as any[])?.find((m) => m.modelId === options.model);
@@ -704,6 +768,8 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
     host = new MuseHost(spawned.connection, spawned.initializeResult, {...options,verifyLogin}, async () => {
       try { await spawned.close(); } finally { await cleanup(); }
     });
+    if (batchReason) host.degradeBatches(batchReason);
+    else if (host.batches) featureActive(options.clientBuild ?? "unknown build","rawLog");
     void spawned.child.exit.then((exit) => host!.hostExited(exit));
     // These pre-open frames cannot belong to a newly created root session.
     held.length = 0;
@@ -712,6 +778,7 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
     if(policyDenial(error))policyLatch="Muse nonretryable provider refusal latched; account-owner review required";
     await (host ? host.close() : handshake.close()).catch(() => undefined);
     await cleanup();
+    if (serverRequiresUpgrade(error)) throw new MuseUpgradeRequired(options.clientBuild ?? clientBuildLabel(launch.command));
     throw error;
   } finally { options.signal?.removeEventListener("abort", abortOpen); }
 }
