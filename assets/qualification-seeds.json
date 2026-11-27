@@ -20,5 +20,22 @@
       "source": "pre-existing live qualification, 2026-11-10 and original 1.4.14",
       "sha256Coverage": "retained official bytes"
     }
+  },
+  {
+    "build": "1.4.25-R9361.1",
+    "sha256": "c1b728fb9732503c5e1869e3ad2f2c9bdb5b2638fb4cf398d6e2c46aa6d8f94a",
+    "schemaHash": "0a4f57461c6ce4f0596e406bdd9b69d02784eead4e93422afeab965eea9c6e9c",
+    "qualified": true,
+    "results": {
+      "offline": true,
+      "liveEvidence": {"at": "2026-11-25T00:41:26.406Z", "model": "muse-ember-1.0", "thinkingLevel": "minimal"},
+      "live": {
+        "batchBoundary": {"status": "passed", "detail": "One native committed batch with both fixture keys."},
+        "privatePrompt": {"status": "passed", "detail": "Exact synthetic label provided only in the system prompt."},
+        "sessionMcp": {"status": "passed", "detail": "Two separate Pi-journaled results and both randomized values in the final answer."},
+        "resume": {"status": "passed", "detail": "Earlier tool output recalled after host retirement and Pi history replay."},
+        "image": {"status": "passed", "detail": "Correct dominant color identified from the PNG fixture."}
+      }
+    }
   }
 ]

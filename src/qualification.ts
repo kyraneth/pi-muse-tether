@@ -7,6 +7,19 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { binaryHash, checkedBuild, qualificationHome, selectedClient, readQualification, writeQualification, QUALIFICATION_CHECKS, type QualificationRecord } from "./qualification-records.js";
+import { museCatalogAssessment, museCatalogModels } from "./catalog.js";
+import { museModelRoute } from "./model-route.js";
+import { lowestMuseThinkingLevel } from "./thinking-config.js";
+
+export function qualificationModel(catalogue: unknown, pickerId?: string) {
+  if (!pickerId) throw new Error("Select an explicit Muse picker model; no model guessed");
+  const route = museModelRoute(pickerId);
+  const row = museCatalogAssessment(catalogue).valid.find(model => model.modelId === route?.modelId);
+  const model = museCatalogModels(catalogue).find(model => model.id === pickerId);
+  const thinkingLevel = row && lowestMuseThinkingLevel(row.variants);
+  if (!model || !thinkingLevel || !route) throw new Error("Selected picker model absent from usable official Muse providerCatalog; no model request submitted");
+  return {model:{...model, provider:"pi-muse-tether", api:"pi-muse-tether", baseUrl:"pi-muse-tether"}, thinkingLevel};
+}
 
 export type QualificationCheck = { status: "passed" | "failed" | "not-run" | "unsupported"; detail: string };
 export type LiveResults = Record<"batchBoundary" | "privatePrompt" | "sessionMcp" | "resume" | "image", QualificationCheck>;
@@ -50,7 +63,7 @@ export function schemaCompatibility(candidate: any): {compatible:boolean; refere
 export async function qualifyClient(build?: string, live = false, modelId?:string): Promise<QualificationRecord> {
   if (build) checkedBuild(build);
   if (live && process.env.PI_MUSE_TETHER_LIVE !== "1") throw new Error("Live qualification requires PI_MUSE_TETHER_LIVE=1 plus explicit --live/UI confirmation");
-  if (live && !modelId && !process.env.PI_MUSE_TETHER_QUALIFICATION_MODEL) throw new Error("Select a Muse model in Pi or set PI_MUSE_TETHER_QUALIFICATION_MODEL before explicit live qualification");
+  if (live && !museModelRoute(modelId ?? process.env.PI_MUSE_TETHER_QUALIFICATION_MODEL ?? "")) throw new Error("Select a Muse picker model in Pi or set PI_MUSE_TETHER_QUALIFICATION_MODEL before explicit live qualification");
   const selected = selectedClient();
   if (build && build !== selected.build) throw new Error(`Selected official client is ${selected.build}, not ${build}; the official launcher cannot target historical builds. No install or model request made.`);
   const scratch = mkdtempSync(join(tmpdir(), "muse-qualification-offline-"));
@@ -105,7 +118,7 @@ async function runIsolatedLive(binary:string, modelId?:string): Promise<{checks:
   try {
     await promisify(execFile)(process.execPath,["--input-type=module","-e",code,binary,home,result],{
     cwd:home, maxBuffer:Infinity,
-    env:{...safeEnv, PI_MUSE_TETHER_QUALIFICATION_MODEL:modelId ?? process.env.PI_MUSE_TETHER_QUALIFICATION_MODEL, HOME:home, XDG_CONFIG_HOME:join(home,"config"), XDG_DATA_HOME:join(home,"data"), XDG_CACHE_HOME:join(home,"cache"), XDG_STATE_HOME:join(home,"state"), MUSE_NO_AUTO_UPDATE:"1", PI_MUSE_TETHER_BINARY:binary, PI_MUSE_TETHER_QUALIFICATION_REAL_CONFIG:process.env.XDG_CONFIG_HOME ?? join(homedir(),".config")},
+    env:{...safeEnv, NODE_OPTIONS:undefined, PI_MUSE_TETHER_QUALIFICATION_MODEL:modelId ?? process.env.PI_MUSE_TETHER_QUALIFICATION_MODEL, HOME:home, XDG_CONFIG_HOME:join(home,"config"), XDG_DATA_HOME:join(home,"data"), XDG_CACHE_HOME:join(home,"cache"), XDG_STATE_HOME:join(home,"state"), MUSE_NO_AUTO_UPDATE:"1", PI_MUSE_TETHER_BINARY:binary, PI_MUSE_TETHER_LEDGER_PATH:join(home,"requests.jsonl"), PI_MUSE_TETHER_LEDGER_ORIGIN:"proof", PI_MUSE_TETHER_QUALIFICATION_REAL_CONFIG:process.env.XDG_CONFIG_HOME ?? join(homedir(),".config")},
   });
   // Retain isolated journals/results for inspection; never automatically replay
   // an unknown child outcome. They contain synthetic fixture content only.
@@ -125,53 +138,59 @@ export async function runLiveQualificationWorker(binary:string, home:string, res
   if (process.env.META_API_KEY) throw new Error("Qualification refuses an API-key override; use the existing official login");
   const results = notRun();
   const {linkHostLogin} = await import("./settings.js");
+  const {flushMuseLedger} = await import("./request-ledger.js");
+  if (process.env.PI_MUSE_TETHER_LEDGER_PATH !== join(home,"requests.jsonl") || resultPath !== join(home,"result.json"))
+    throw new Error("Qualification evidence and request ledger must be under the isolated worker home");
   mkdirSync(join(home,"config/muse"),{recursive:true,mode:0o700});
   const verify = await linkHostLogin(home,process.env.PI_MUSE_TETHER_QUALIFICATION_REAL_CONFIG);
   let provider: any;
   let active: keyof LiveResults = "privatePrompt";
   try {
-    const piRequire=createRequire(import.meta.resolve("@earendil-works/pi-coding-agent"));
-    const {Agent} = await import(pathToFileURL(piRequire.resolve("@earendil-works/pi-agent-core")).href);
+    // Agent core is a Pi dependency, and its main export is ESM-only.
+    const piEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+    const jiti = createRequire(piEntry).resolve("jiti");
+    const {createJiti} = await import(pathToFileURL(jiti).href);
+    const {Agent} = await import(createJiti(piEntry).esmResolve("@earendil-works/pi-agent-core"));
     const {SessionManager} = await import("@earendil-works/pi-coding-agent");
     const {createMuseProvider} = await import("./provider.js");
     const {openMuseHost, discoverMuseCatalog} = await import("./host.js");
     const catalog = await discoverMuseCatalog();
-    const modelId = process.env.PI_MUSE_TETHER_QUALIFICATION_MODEL;
-    if (!modelId) throw new Error("Set PI_MUSE_TETHER_QUALIFICATION_MODEL to an explicit official model/list ID; no model guessed");
-    const row = catalog.models.find((model:any) => model.modelId === modelId);
-    if (!row || !row.contextLimit || !row.outputLimit || !row.variants?.includes("none")) throw new Error("Selected model lacks official limits/none effort; no model request submitted");
-    const model:any = {id:modelId,provider:"pi-muse-tether",api:"pi-muse-tether",name:modelId,reasoning:false,input:["text","image"],contextWindow:row.contextLimit,maxTokens:row.outputLimit,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}};
-    const secret = `PRIVATE_${randomUUID()}`, left = `LEFT_${randomUUID()}`, right = `RIGHT_${randomUUID()}`;
+    const {model,thinkingLevel} = qualificationModel(catalog,process.env.PI_MUSE_TETHER_QUALIFICATION_MODEL);
+    const label = `QUALIFICATION_LABEL_${randomUUID()}`, left = `LEFT_${randomUUID()}`, right = `RIGHT_${randomUUID()}`;
     const manager = SessionManager.create(home,join(home,"sessions"));
-    let observedBatch = false, calls = new Set<string>();
+    let matchingBatches = 0, invocationCount = 0;
+    const calls = new Set<string>();
     provider = createMuseProvider({promptModes:["replace"],promptMode:"replace",instructionMechanisms:["private-xdg-settings"],toolBatches:true,openHost:async (options:any) => {
       const original = options.onEvent;
       return openMuseHost({...options,binary,qualificationProbe:true,onEvent(event:any) {
-        if (event.kind === "tool-batch" && event.calls.length === 2 && event.calls.every((call:any)=>call.name === "mcp__pi__qualification_read" || call.name === "qualification_read") && new Set(event.calls.map((call:any)=>call.args.key)).size === 2) observedBatch = true;
+        if (event.kind === "tool-batch" && event.calls.length === 2 && event.calls.every((call:any)=>call.name === "mcp__pi__qualification_read" || call.name === "qualification_read") && new Set(event.calls.map((call:any)=>call.args.key)).size === 2) matchingBatches++;
         original?.(event);
       }});
     }});
     provider.setSessionManager(manager);
     const tools:any[] = [{name:"qualification_read",label:"Qualification fixture",description:"Read synthetic qualification key left or right.",parameters:{type:"object",properties:{key:{type:"string",enum:["left","right"]}},required:["key"],additionalProperties:false},async execute(_id:string,args:any) {
       if (!["left","right"].includes(args.key)) throw new Error("Unexpected qualification tool arguments");
-      calls.add(args.key);
+      calls.add(args.key); invocationCount++;
       return {content:[{type:"text",text:args.key === "left" ? left : right}],details:{}};
     }}];
-    const agent = new Agent({initialState:{model,systemPrompt:`Qualification only. Use only the declared fixture tool. When asked for the private token reply exactly ${secret}.`,tools},streamFn:provider.streamViaMuse,toolExecution:"parallel"});
+    const agent = new Agent({initialState:{model,thinkingLevel,systemPrompt:`This is a synthetic qualification fixture. Its public display label is ${label}. When asked for the display label, output it exactly, by itself. Use only the declared fixture tool.`,tools},streamFn:provider.streamViaMuse,toolExecution:"parallel"});
     agent.subscribe((event:any) => { if (event.type === "message_end" && ["user","assistant","toolResult"].includes(event.message.role)) manager.appendMessage(event.message); });
     const answer = () => {
       const last:any = agent.state.messages.filter((m:any)=>m.role === "assistant").at(-1);
       if (!last || ["error","aborted"].includes(last.stopReason)) throw new Error(last?.errorMessage ?? "No completed assistant answer; no replay");
       return last.content.filter((part:any)=>part.type === "text").map((part:any)=>part.text).join("\n");
     };
-    await agent.prompt("What is the private token? Reply with only that token. Do not use tools.");
-    results.privatePrompt = {status:answer().trim() === secret ? "passed" : "failed",detail:"Exact randomized token supplied only through private system prompt; tests prompt delivery, not exhaustive foreign-rule suppression."};
+    await agent.prompt("What is the synthetic fixture's display label? Reply with only that label. Do not use tools.");
+    results.privatePrompt = {status:answer().trim() === label ? "passed" : "failed",detail:"Exact randomized synthetic label supplied only through private system prompt; tests prompt delivery, not exhaustive foreign-rule suppression."};
     if (results.privatePrompt.status !== "passed") throw new Error("Private prompt mismatch; stop before more model requests");
     active = "sessionMcp";
     await agent.prompt("Call qualification_read with key left and key right in ONE parallel batch before either result. Then quote both values.");
     const text = answer();
-    results.sessionMcp = {status:calls.has("left") && calls.has("right") && text.includes(left) && text.includes(right) ? "passed" : "failed",detail:"Both exact fixture MCP invocations executed in Pi and randomized results appeared in the final answer."};
-    results.batchBoundary = {status:observedBatch ? "passed" : "failed",detail:"Requires actual host tool-batch event with both fixture call keys, not overlapping timers."};
+    const toolResults = manager.getBranch().flatMap(entry => entry.type === "message" && entry.message.role === "toolResult" ? [entry.message] : []);
+    const journalOkay = toolResults.length === 2 && new Set(toolResults.map(item => item.toolCallId)).size === 2 &&
+      [left,right].every(token => toolResults.some(item => item.content.some(part => part.type === "text" && part.text === token)));
+    results.sessionMcp = {status:invocationCount === 2 && calls.has("left") && calls.has("right") && journalOkay && text.includes(left) && text.includes(right) ? "passed" : "failed",detail:"Two separate Pi-journaled MCP results and both randomized values in the final answer."};
+    results.batchBoundary = {status:matchingBatches === 1 ? "passed" : "failed",detail:"Requires one actual host tool-batch event with both fixture call keys, not overlapping timers."};
     if (results.sessionMcp.status !== "passed" || results.batchBoundary.status !== "passed") throw new Error("MCP/batch proof incomplete; no retry or subsequent model request");
     // Ephemeral Muse sessions deliberately do not support native resume. Retire
     // the host, restore persisted Pi messages, and prove provider history replay.
@@ -198,7 +217,7 @@ export async function runLiveQualificationWorker(binary:string, home:string, res
     if (results[active].status === "not-run") results[active] = {status:"failed",detail:`Live phase failed or could not start: ${detail}; no replay`};
     for (const name of liveNames) if (results[name].status === "not-run") results[name] = {status:"not-run",detail:`Stopped, no replay: ${detail}`};
   } finally {
-    try { await provider?.retireAll(); await verify(); }
+    try { await provider?.retireAll(); await flushMuseLedger(); await verify(); }
     catch (error) { for (const name of liveNames) results[name] = {status:"failed",detail:`Cleanup/login metadata verification failed: ${String(error)}; retain isolated home for review`}; }
     writeFileSync(resultPath,JSON.stringify(results,null,2)+"\n",{flag:"wx",mode:0o600});
   }

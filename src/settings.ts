@@ -1,6 +1,53 @@
-import { mkdir, writeFile, stat, lstat, readlink, symlink } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, realpath, rm, writeFile, stat, lstat, readlink, symlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { NATIVE_SEARCH_TOOL } from "./native-search.js";
+
+export function museToolset(piTools: readonly string[], nativeSearch?: boolean) {
+  const tools = piTools.map(name => `mcp__pi__${name}`);
+  if (nativeSearch) tools.push(NATIVE_SEARCH_TOOL);
+  return tools;
+}
+
+/** Muse canonicalizes its workspace before trust lookup (e.g. macOS /var). */
+export async function createVendorRoot(prefix: string) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  try { return await realpath(root); }
+  catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
+}
+
+/** Only the vendor child gets these writable roots. Pi, ledgers and durable
+ * qualification records keep the parent's environment. Discovery preserves
+ * the official config and home; a private prompt owns its config separately. */
+export function vendorProcessEnv(env: NodeJS.ProcessEnv | undefined, root: string, config: "inherited" | "private" | "echo") {
+  return {
+    ...env,
+    XDG_DATA_HOME: join(root, "data"), XDG_CACHE_HOME: join(root, "cache"), XDG_STATE_HOME: join(root, "state"),
+    ...(config !== "inherited" ? { XDG_CONFIG_HOME: join(root, "config") } : {}),
+    ...(config === "echo" ? { HOME: root } : {}),
+  };
+}
+
+/** Muse may return only its bundled catalogue with a cold vendor data root,
+ * even with a valid login. Give it its own saved catalogue files in the
+ * disposable root, without granting it writes to the original vendor data. */
+export async function seedVendorCatalogue(env: NodeJS.ProcessEnv | undefined, root: string) {
+  const data = env?.XDG_DATA_HOME;
+  const source = join(data && isAbsolute(data) ? data : join(env?.HOME || homedir(), ".local/share"), "muse/model-catalog");
+  const destination = join(root, "data/muse/model-catalog");
+  try {
+    for (const file of await readdir(source, { withFileTypes: true })) {
+      // Muse Code stores one JSON file per hex-encoded provider/profile.
+      if (!file.isFile() || !/^[0-9a-f]+__p[0-9a-f]+\.json$/.test(file.name)) continue;
+      await mkdir(destination, { recursive: true, mode: 0o700 });
+      await copyFile(join(source, file.name), join(destination, file.name));
+    }
+  } catch (error) {
+    // No vendor cache on a fresh login, or a cache entry was removed concurrently.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 
 // Prior art: jkeskikangas/pi-muse-subscription b83e605e src/home.ts.
 // Official configuration docs describe runtime_capabilities. These exact IDs
@@ -35,13 +82,25 @@ export async function linkHostLogin(hostRoot:string, realConfigHome:string) {
     return metadata;
   };
 }
-/** Official read-only inventory. No model request, timeout or buffer-size cap. */
-export async function discoverSkillsOff(binary:string, cwd:string, env:Record<string,string|undefined>):Promise<SkillsOff> {
+/** Official skill inventory (may materialize skills in vendor data).
+ * No model request, timeout or buffer-size cap. */
+export async function discoverSkillsOff(binary:string, cwd:string, env:Record<string,string|undefined>, signal?:AbortSignal):Promise<SkillsOff> {
+  signal?.throwIfAborted();
   const child=spawn(binary,["skills","list","--json"],{cwd,env,stdio:["ignore","pipe","pipe"]});
   let stdout="";child.stdout.setEncoding("utf8");child.stdout.on("data",part=>stdout+=part);
   // Drain diagnostics without persisting user context or credentials.
   child.stderr.resume();
-  const exit=await new Promise<number|null>((resolve,reject)=>{child.once("error",reject);child.once("close",resolve);});
+  let spawnError:Error|undefined;
+  child.on("error",error=>{spawnError=error;});
+  const closed=new Promise<number|null>(resolve=>child.once("close",resolve));
+  // This disposable, read-only subprocess has no protocol shutdown to await.
+  // Wait for close (reaping and pipe disposal), not just signal delivery.
+  const abort=()=>{child.kill("SIGKILL");};
+  signal?.addEventListener("abort",abort,{once:true});
+  if(signal?.aborted)abort();
+  const exit=await closed.finally(()=>signal?.removeEventListener("abort",abort));
+  signal?.throwIfAborted();
+  if(spawnError)throw spawnError;
   if(exit!==0)throw new Error(`Muse skill inventory failed (${exit}); no default fallback`);
   const parsed=JSON.parse(stdout),rows=Array.isArray(parsed)?parsed:parsed.skills;
   if(!Array.isArray(rows))throw new Error("Muse skill inventory malformed; no default fallback");
@@ -49,7 +108,7 @@ export async function discoverSkillsOff(binary:string, cwd:string, env:Record<st
   for(const row of rows){if(typeof row.scope!=="string"||typeof row.path!=="string")throw new Error("Muse skill inventory lacks scope/path");(off[row.scope]??={})[row.path]="off";}
   return off;
 }
-export function promptSettings(systemPrompt: string, tools: readonly string[], skillsOff: SkillsOff = {}, delivery: "replace" | "append" = "replace") {
+export function promptSettings(systemPrompt: string, tools: readonly string[], skillsOff: SkillsOff = {}, delivery: "replace" | "append" = "replace", nativeSearch?: boolean) {
   if (typeof systemPrompt !== "string") throw new Error("Pi system prompt must be exact text");
   return {
     schema_version: 1,
@@ -58,7 +117,7 @@ export function promptSettings(systemPrompt: string, tools: readonly string[], s
     permissions: {schema_version:1,default_profile:":ask-me"},
     run: {
       ...(delivery === "replace" ? {system_prompt:systemPrompt} : {developer_prompt:systemPrompt}),
-      toolset: tools.map(name => `mcp__pi__${name}`),
+      toolset: museToolset(tools, nativeSearch),
       workflow_trigger_mode: "off",
       context_usage_message_enabled: false,
       context_slimming: { meta_context_note_enabled: false, session_identity_enabled: false },
@@ -76,11 +135,11 @@ export function promptSettings(systemPrompt: string, tools: readonly string[], s
  * directory is trusted. Pi still owns cwd and every tool path. */
 export const privateWorkspace = (hostRoot: string) => join(hostRoot, "workspace");
 /** Caller owns a unique host root; no shared mutable settings/schema or auth links. */
-export async function writePromptSettings(hostRoot: string, systemPrompt: string, tools: readonly string[], skillsOff?: SkillsOff, delivery: "replace" | "append" = "replace") {
+export async function writePromptSettings(hostRoot: string, systemPrompt: string, tools: readonly string[], skillsOff?: SkillsOff, delivery: "replace" | "append" = "replace", nativeSearch?: boolean) {
   const xdg = join(hostRoot,"config");
   await mkdir(join(xdg,"muse"),{recursive:true,mode:0o700});
   await mkdir(privateWorkspace(hostRoot),{recursive:true,mode:0o700});
-  await writeFile(join(xdg,"muse","settings.json"), JSON.stringify(promptSettings(systemPrompt,tools,skillsOff,delivery)),{mode:0o600,flag:"wx"});
+  await writeFile(join(xdg,"muse","settings.json"), JSON.stringify(promptSettings(systemPrompt,tools,skillsOff,delivery,nativeSearch)),{mode:0o600,flag:"wx"});
   await writeFile(join(xdg,"muse","trust.json"), JSON.stringify({schema_version:1,projects:{[privateWorkspace(hostRoot)]:{decision:"trusted"}}}),{mode:0o600,flag:"wx"});
   return xdg;
 }

@@ -1,11 +1,25 @@
 import type { ReasoningEffort } from "./wire-types.js";
-/** MSP SS3.2: explicit per-turn tier, never the client's configured default. */
+const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+/** Map explicit Pi levels to the wire vocabulary. The host resolves omissions. */
 export function museEffort(level?: string): ReasoningEffort {
   if (level === undefined || level === "off") return "none";
-  if (["minimal", "low", "medium", "high", "xhigh", "max"].includes(level))
+  if (levels.some(candidate => candidate === level))
     return level as ReasoningEffort;
   throw new Error(`Unsupported Pi Muse thinking level: ${level}`);
 }
+export function lowestMuseThinkingLevel(variants: readonly unknown[]) {
+  return levels.find(level => variants.includes(museEffort(level)));
+}
+
+/** MSP SS3.2: send an explicit tier once per native turn, not the client default. */
+export function resolveMuseEffort(level: string | undefined, variants: readonly string[] | undefined, model?: string) {
+  const floor = variants ? lowestMuseThinkingLevel(variants) : "off";
+  const tier = level === undefined ? (floor && museEffort(floor)) : museEffort(level === "none" ? "off" : level);
+  if (!tier || (variants && !variants.includes(tier)))
+    throw new Error(`Muse effort ${tier ?? "(omitted)"} absent from official model/list for ${model}; supported Pi levels: ${levels.filter(level => variants?.includes(museEffort(level))).join(", ") || "none"}; no model request submitted`);
+  return {tier, resolution:level !== undefined ? "explicit" : tier === "none" ? "omitted-none" : "omitted-floor"};
+}
+
 /** Stream only vendor-exposed reasoning text/summary, never fabricate signatures. */
 export function thinkingFrame(
   output: any,
@@ -71,7 +85,7 @@ export function thinkingFrame(
 export function museThinkingLevelMap(variants: unknown) {
   const tiers = Array.isArray(variants) ? variants : [];
   return Object.fromEntries(
-    ["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => {
+    levels.map((level) => {
       const tier = museEffort(level);
       return [level, tiers.includes(tier) ? tier : null];
     }),

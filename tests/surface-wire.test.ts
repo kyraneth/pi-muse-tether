@@ -125,7 +125,7 @@ it("official SDK wire carries image and each explicit effort; no SDK/model repla
         { type: "text", text: "synthetic" },
         { type: "image", mediaType: "image/png", base64Data: "aW1hZ2U=" },
       ];
-      const admitted = await f.host.submitInput(parts, museEffort(level));
+      const admitted = await f.host.submitInput(parts, level);
       const wire = f.writes.filter((x) => x.method === "turn/start").at(-1);
       expect(wire.params.input).toEqual(parts);
       expect(wire.params.reasoningEffort).toBe(level ?? "none");
@@ -145,7 +145,9 @@ it("official SDK wire carries image and each explicit effort; no SDK/model repla
     await flushMuseLedger();
     const body = await readFile(museLedgerPath(), "utf8");
     const admissions = body.trim().split("\n").map(line => JSON.parse(line)).filter(r => r.type === "turn_admitted");
-    expect(admissions.map(r => r.requestedEffort)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    expect(admissions.map(r => r.requestedEffort)).toEqual([null, "minimal", "low", "medium", "high", "xhigh", "max"]);
+    expect(admissions[0]).toMatchObject({submittedEffort:"none",effortResolution:"omitted-none"});
+    expect(admissions.slice(1).every(r => r.submittedEffort === r.requestedEffort && r.effortResolution === "explicit")).toBe(true);
     expect(admissions.every(r => r.disposition === "started" && r.images[0].bytes === 5 && r.images[0].sha256.length === 64)).toBe(true);
     expect(body).not.toContain("aW1hZ2U=");
     expect(body).not.toContain("base64Data");
@@ -206,10 +208,10 @@ it("doctor remains local and reports unqualified client clearly without credenti
   expect(ok.client).toBe("1.4.14");
   expect(ok.apiKeyForwarded).toBe(false);
   expect(ok.cache.ttlSeconds).toBeNull();
-  await writeFile(binary, script("1.4.16"), { mode: 0o700 });
+  await writeFile(binary, script("1.4.26"), { mode: 0o700 });
   const newer = JSON.parse(await museDoctor());
   expect(newer.ok).toBe(true);
-  expect(newer.versionPolicy).toEqual({minimum:"1.4.14",testedMaximum:"1.4.15",newerThanTested:true,strict:false});
+  expect(newer.versionPolicy).toEqual({minimum:"1.4.14",testedMaximum:"1.4.25",newerThanTested:true,strict:false});
   vi.stubEnv("PI_MUSE_TETHER_STRICT_VERSION", "1");
   const failed = JSON.parse(await museDoctor());
   expect(failed.ok).toBe(false);

@@ -56,8 +56,9 @@ Offline checks do not certify exhaustive private-prompt isolation or session MCP
 
 Select a Muse model in Pi, then authorize the doctor command above. Outside a
 Muse picker context, set `PI_MUSE_TETHER_QUALIFICATION_MODEL` to an explicit
-official `model/list` ID. The runner does not guess a model.
-It verifies its catalogue limits and `none` effort before submitting any turn.
+Muse picker ID, including any Contributor suffix. The runner does not guess a
+model. It resolves that exact recipe against the official provider catalogue,
+uses the registered limits, and runs at its lowest supported Pi thinking level.
 Each scenario runs once; failure stops subsequent scenarios, without replay.
 
 A subprocess owns a unique HOME, all four XDG roots, ledger and Pi session
@@ -73,8 +74,8 @@ The worker uses the real provider, Agent, MCP broker and official host:
 
 | Check | Required observation |
 | --- | --- |
-| Private prompt | Exact randomized token supplied only in the private system prompt is returned. This tests prompt delivery, not exhaustive suppression of every foreign rule. |
-| Session MCP | Pi actually executes both synthetic `qualification_read` invocations and the final answer contains both randomized outputs. |
+| Private prompt | Exact randomized synthetic label supplied only in the private system prompt is returned. This tests prompt delivery, not exhaustive suppression of every foreign rule. |
+| Session MCP | Pi executes both synthetic `qualification_read` invocations once, journals separate results, and the final answer contains both randomized outputs. |
 | Batch boundary | One actual `tool-batch` host event contains both fixture keys. Timing overlap or two separate calls does not count. |
 | Resume | Retire the real ephemeral host, restore messages from the Pi journal, and recall the earlier randomized tool output without tools. This is Pi history replay, **not native Muse session resume**. |
 | Image | Submit real PNG bytes for a randomized red/blue swatch through Pi image input and check the answer. This is not proof of tool-result image receipt parity. |
@@ -93,5 +94,5 @@ substitute for the root-owned single authorized end-to-end production proof.
 
 `tests/qualification.test.ts` exercises fake read-only executable commands,
 retained schema compatibility, hash-bound records, explicit live gates, build
-mismatch refusal and failure records. It does not call a model. The live suite
-is implemented but **was not run** during this implementation.
+mismatch refusal and failure records. Those tests do not call a model or award
+live qualification. See the exact build's qualification record for live evidence.

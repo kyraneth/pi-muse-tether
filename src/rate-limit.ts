@@ -25,9 +25,33 @@ export function quotaStatusLine(p: ReturnType<typeof quotaPayload>) {
   const span = mins === null ? "window" : mins % 60 === 0 ? `${mins / 60}h` : `${mins}m`;
   return `Muse ${span} ${pct(p.window.usedPercent)}${at(p.window.resetsAtMs)} · week ${pct(p.weekly.usedPercent)}`;
 }
+export function hasQuotaData(u: any): boolean {
+  const p = quotaPayload(u);
+  return (
+    p.observedAtMs !== null ||
+    p.tier !== null ||
+    p.window.usedPercent !== null ||
+    p.window.resetsAtMs !== null ||
+    p.window.windowDurationMins !== null ||
+    p.weekly.usedPercent !== null ||
+    p.weekly.resetsAtMs !== null
+  );
+}
 export function quotaExhausted(u: any) {
-  return u?.window?.usedPercent >= 100 || u?.weekly?.usedPercent >= 100;
+  const windowPct = num(u?.window?.usedPercent);
+  const weeklyPct = num(u?.weekly?.usedPercent);
+  return (windowPct !== null && windowPct >= 100) || (weeklyPct !== null && weeklyPct >= 100);
 } // vendor exhausted boundary
+export function quotaExhaustedResetIso(u: any): string | undefined {
+  const resets: number[] = [];
+  const windowPct = num(u?.window?.usedPercent);
+  const windowReset = num(u?.window?.resetsAtMs);
+  if (windowPct !== null && windowPct >= 100 && windowReset !== null) resets.push(windowReset);
+  const weeklyPct = num(u?.weekly?.usedPercent);
+  const weeklyReset = num(u?.weekly?.resetsAtMs);
+  if (weeklyPct !== null && weeklyPct >= 100 && weeklyReset !== null) resets.push(weeklyReset);
+  return resets.length ? new Date(Math.max(...resets)).toISOString() : undefined;
+}
 let listener: ((p: ReturnType<typeof quotaPayload>) => void) | undefined;
 let lastIdentity: string | undefined;
 export function setQuotaListener(fn: typeof listener) {

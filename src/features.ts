@@ -9,7 +9,7 @@ export const MUSE_FEATURE_CONTRACT = {
   rawLog:{stability:"experimental",check:"qualification evidence + initialize grant + recorded envelope and consumed payload schema",fallback:"sequential Pi tools; no replay"},
   privatePrompt:{stability:"experimental",check:"experimentalApi negotiation + session reviewer shape; exact instruction delivery attested by live qualification",fallback:"supported run.developer_prompt; appended, not replacement"},
   sessionMcp:{stability:"stable capability with experimental configuration",check:"initialize sessionMcp grant + session/start identity + inventory readiness/tool names",fallback:"typed refusal; Pi must own tools"},
-  versionPolicy:{minimum:"protocol-compatible floor",testedRange:"declared evidence, warning above maximum",strict:"explicit opt-in refuses above maximum",updates:"vendor-owned; no production suppression"},
+  versionPolicy:{minimum:"protocol-compatible floor",testedRange:"declared evidence; ledger diagnostic above maximum",strict:"explicit opt-in refuses above maximum",updates:"vendor-owned; no production suppression"},
 } as const;
 export const museFeatureStatus = () => ({
   rawLog:{status:"not negotiated",fallback:"sequential unless qualified and granted"},

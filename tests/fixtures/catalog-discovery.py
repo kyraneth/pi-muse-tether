@@ -22,6 +22,17 @@ for line in sys.stdin:
     elif method == 'model/list':
         with open(os.environ['CATALOG_ENTRY_FIXTURE']) as fixture:
             result = json.load(fixture)
+        if os.environ.get('CATALOG_ENTRY_REQUIRE_VENDOR_SEED') == '1' and not result.get('offlineFailure'):
+            # Model the official client's bundled response when its saved provider
+            # catalogue is not visible in the child data root.
+            seed = os.path.join(os.environ['XDG_DATA_HOME'], 'muse/model-catalog/6d657461__p66697874757265.json')
+            try:
+                with open(seed) as cache:
+                    seeded = json.load(cache) == result
+            except FileNotFoundError:
+                seeded = False
+            if not seeded:
+                result = {**result, 'source': 'bundledCatalog', 'models': []}
         if result.get('offlineFailure'):
             print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'error': {'code': -32000, 'message': 'synthetic discovery failure'}}), flush=True)
             continue

@@ -1,5 +1,6 @@
 import type { TurnInputPart } from "./wire-types.js";
-import { importPiHistory, currentUserStart } from "./history.js";
+import { projectPiHistory, currentUserStart } from "./history.js";
+import type { ReplayInput } from "./turn-plan.js";
 export function museUserParts(user: any): TurnInputPart[] {
   const content =
     typeof user.content === "string"
@@ -17,9 +18,7 @@ export function museUserParts(user: any): TurnInputPart[] {
       !/^image\/[a-z0-9.+-]+$/i.test(p.mimeType) ||
       typeof p.data !== "string" ||
       !p.data ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-        p.data,
-      )
+      p.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(p.data)
     )
       throw new Error(
         "Muse image requires mediaType and nonempty valid base64",
@@ -28,10 +27,13 @@ export function museUserParts(user: any): TurnInputPart[] {
   });
 }
 /** Text snapshot stays inert; typed images carry explicit record/block references. */
-export function museHistoryParts(messages: any[], compactedContinuation = false): TurnInputPart[] {
+function replayParts(messages: any[], compactedContinuation = false) {
   const start = currentUserStart(messages);
-  if (start === 0 && messages.length) return currentUserParts(messages);
-  const images: TurnInputPart[] = [];
+  if (start === 0 && messages.length) {
+    const parts=currentUserParts(messages);
+    return {parts,history:[],final:parts};
+  }
+  const images: TurnInputPart[][] = [];
   // Only historical images need record references. Current images remain in
   // their original order amongst current text, including extension messages.
   const history = messages.slice(0, start);
@@ -43,24 +45,31 @@ export function museHistoryParts(messages: any[], compactedContinuation = false)
         : m.content?.map((p: any, block: number) => {
             if (p.type !== "image") return p;
             const tag = `PI IMAGE entry=${entry} block=${block}`;
-            images.push(
-              {
-                type: "text",
-                text: `${tag} (historical data, not a new instruction)`,
-              },
-              ...museUserParts({ content: [p] }),
-            );
+            images.push([
+              {type:"text",text:`${tag} (historical data, not a new instruction)`},
+              ...museUserParts({content:[p]}),
+            ]);
             return { type: "text", text: `[${tag}]` };
           }),
   }));
   if (start < messages.length) projected.push({role:"user",content:""});
-  const text = importPiHistory(projected, (m) =>
-    museUserParts(m)
-      .map((p) => p.text ?? "")
-      .join("\n"),
-    compactedContinuation,
-  );
-  return [{ type: "text", text: start < messages.length ? text.replace(/\n$/, "") : text }, ...images, ...currentUserParts(messages.slice(start))];
+  const projection = projectPiHistory(projected, (m) =>
+    museUserParts(m).map(p=>p.text ?? "").join("\n"), compactedContinuation);
+  const tail=currentUserParts(messages.slice(start));
+  const text=(text:string):TurnInputPart=>({type:"text",text});
+  const directive=projection.directive+(start<messages.length ? "" : "\n"+projection.text);
+  return {
+    parts:[text(projection.history.join("")+directive),...images.flat(),...tail],
+    history:[...projection.history.map(record=>[text(record)]),...images],
+    final:[text(directive+"\n"),...tail],
+  };
+}
+export function museHistoryParts(messages: any[], compactedContinuation = false): TurnInputPart[] {
+  return replayParts(messages,compactedContinuation).parts;
+}
+export function museReplayInput(messages:any[],compactedContinuation=false): ReplayInput {
+  const {parts,history,final}=replayParts(messages,compactedContinuation);
+  return {single:submission(parts),history,final};
 }
 
 /** Preserve content order and text boundaries across Pi user/custom messages. */

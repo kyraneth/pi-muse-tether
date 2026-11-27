@@ -1,6 +1,8 @@
 import { it, expect, afterEach, vi } from "vitest";
 import { createMuseProvider } from "../src/provider.js";
 import { museModelRoute } from "../src/model-route.js";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { calculateCost } from "@earendil-works/pi-ai";
 import { fixtureState, openFixtureHost } from "./fixture-host.js";
 const providers:any[]=[];
 afterEach(async()=>{for(const p of providers) await p.retireAll();providers.length=0;fixtureState.opens=[];fixtureState.events=[];fixtureState.raw="success";fixtureState.coding="normal";vi.unstubAllEnvs();});
@@ -23,7 +25,16 @@ for (const id of ["muse-wonder-1.0", "muse-wonder-1.0-contributor", "muse-wonder
    const route = museModelRoute(id)!;
    expect(output.responseModel).toBe(route.contributorMode === "on" ? `${route.modelId}-contributor` : route.modelId);
    expect(output.responseModelSource).toMatch(/^derived:/);
-   if(!id.startsWith("muse-spark-1.3")) expect(output.usage.cost.total).toBeNull();
+   const reference = getBuiltinModels("meta").find(m => m.id === output.responseModel);
+   if (reference) {
+    const cost = calculateCost(reference, {...output.usage, cost: {...output.usage.cost}});
+    expect(output.usage.cost.total).toBe(cost.total);
+    expect(output.costSource).toContain(`Pi-meta:${reference.id}`);
+    expect(output.costPartial).toBe(false);
+   } else {
+    expect(output.usage.cost.total).toBeNull();
+    expect(output.costPartial).toBe(true);
+   }
   }
   // A tier switch is a new host, never reuse a parked opposite-tier process.
   if(id.includes("wonder")&&!id.endsWith("-contributor")) {

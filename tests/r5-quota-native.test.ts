@@ -23,7 +23,7 @@ for(const phase of ['admission','terminal'])for(const raw of [false,true])it(`na
     if(event.type==='agent_settled')break;
    }
    const assistants=wire.filter(e=>e.type==='message_end'&&e.message?.role==='assistant').map(e=>e.message);
-   if(round===1){expect(assistants).toHaveLength(1);expect(assistants[0].stopReason).toBe('error');expect(assistants[0].errorMessage).toBe('Muse quota refused; no replay');}
+   if(round===1){expect(assistants).toHaveLength(1);expect(assistants[0].stopReason).toBe('error');expect(assistants[0].errorMessage).toMatch(/^Muse quota refused \(quota exceeded\); no replay: Synthetic rate limit HTTP 429$/);}
    else {expect(assistants.at(-1).stopReason).toBe('stop');expect(assistants.at(-1).content.some((p:any)=>String(p.text).includes('fixture answer'))).toBe(true);}
   }
  } finally {

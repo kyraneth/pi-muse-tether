@@ -1,88 +1,88 @@
-/** Rates from Pi1.5.0 official meta contributor catalog, USD per million tokens.
- * Not subscription charges. Never use Spark's non-contributor price table.
- */
-export const CONTRIBUTOR_COST = {
-  input: 0.1,
-  output: 0.2,
-  cacheRead: 0.002,
-  cacheWrite: 0,
-};
-/** No applicable Wonder normal/contributor tariff exists in retained official metadata. */
-export function museModelCost(id: string) {
-  return ["muse-spark-1.3", "muse-spark-1.3-contributor"].includes(id)
-    ? CONTRIBUTOR_COST
-    : { input: null, output: null, cacheRead: null, cacheWrite: null };
+import { calculateCost } from "@earendil-works/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { museResponseIdentity } from "./model-route.js";
+
+/** API reference metadata, not entitlement or an observed physical model. */
+export function museApiReference(pickerId: string) {
+  const { responseModel } = museResponseIdentity(pickerId);
+  return responseModel ? getBuiltinModels("meta").find(model => model.id === responseModel) : undefined;
 }
-const finite = (n: any) =>
-  typeof n === "number" && Number.isFinite(n) && n >= 0;
-export function nativeCounters(u: any) {
-  return Object.fromEntries(
-    [
-      "inputTokens",
-      "outputTokens",
-      "cacheReadTokens",
-      "cacheWriteTokens",
-      "cachedTokens",
-      "reasoningTokens",
-    ].map((k) => [k, finite(u?.[k]) ? u[k] : null]),
-  );
+const keys = ["input", "output", "cacheRead", "cacheWrite"] as const;
+export const UNKNOWN_RATES = { input: null, output: null, cacheRead: null, cacheWrite: null } as const;
+export const NO_PRICE_TABLE = "unknown:no-applicable-price-table;not-subscription-billing";
+export const NO_USAGE = "unknown:no-usable-native-usage;not-subscription-billing";
+const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+const counter = (n: unknown) => finite(n) ? n : null;
+
+/** Price one distinct MSP usage record before summing any episode. The caller
+ * owns deduplication by native request identity. MSP does not attest attempts
+ * that lacked a usage record. */
+export function museRequestUsage(pickerId: string | null, p: any) {
+  const u = p?.usage;
+  const native = {
+    inputTokens: counter(u?.inputTokens), outputTokens: counter(u?.outputTokens),
+    cacheReadTokens: counter(u?.cacheReadTokens), cacheWriteTokens: counter(u?.cacheWriteTokens),
+    cachedTokens: counter(u?.cachedTokens), reasoningTokens: counter(u?.reasoningTokens),
+  };
+  const cacheRead = native.cacheReadTokens ?? native.cachedTokens;
+  const cacheWrite = native.cacheWriteTokens;
+  const input = native.inputTokens === null ? null : native.inputTokens - (cacheRead ?? 0) - (cacheWrite ?? 0);
+  const invalid = input !== null && input < 0;
+  const tokens = { input, output: native.outputTokens, cacheRead, cacheWrite };
+  const table = pickerId ? museApiReference(pickerId) : undefined;
+  const estimate = table?.cost && !invalid && keys.some(key => tokens[key] !== null)
+    ? calculateCost(table, {
+        input: input ?? 0, output: tokens.output ?? 0, cacheRead: cacheRead ?? 0, cacheWrite: cacheWrite ?? 0,
+        totalTokens: counter(p.totalTokens) ?? 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      })
+    : undefined;
+  return {
+    native, tokens, invalid,
+    referenceCost: estimate ? {
+      input: estimate.input, output: estimate.output, cacheRead: estimate.cacheRead, cacheWrite: estimate.cacheWrite, total: estimate.total,
+    } : null,
+    referenceCostSource: !table?.cost ? NO_PRICE_TABLE : estimate ? `derived:Pi-meta:${table.id};not-subscription-billing` : NO_USAGE,
+    referenceCostPartial: !estimate || keys.some(key => tokens[key] === null),
+  };
 }
-/** Native Meta input includes cache reads. Pi's input is the uncached component. */
+
+/** Native Meta input includes the cached components. Pi's input is uncached. */
 export function applyMuseUsage(output: any, p: any) {
-  const u = nativeCounters(p.usage),
-    known = (k: string) => u[k] !== null;
-  output.nativeUsage.push(u);
-  if (known("inputTokens")) {
-    const cached = u.cacheReadTokens ?? u.cachedTokens;
-    const writes = u.cacheWriteTokens ?? 0;
-    if (cached !== null && cached + writes > u.inputTokens)
-      throw new Error("Muse cache read exceeds native input");
-    output.usage.input += u.inputTokens - (cached ?? 0) - writes;
-    output.usagePresence.input = true;
-    output.usageInputSource =
-      cached !== null
-        ? "derived:native-input-minus-cache-read-and-write"
-        : "native:inputTokens;cache-split-unknown";
-  }
-  for (const [native, key] of [
-    ["outputTokens", "output"],
-    ["cacheReadTokens", "cacheRead"],
-    ["cacheWriteTokens", "cacheWrite"],
-  ])
-    if (known(native)) {
-      output.usage[key] += u[native];
+  const { native, tokens, invalid, referenceCost, referenceCostSource, referenceCostPartial } = museRequestUsage(output.model, p);
+  if (invalid) throw new Error("Muse cache read/write exceeds native input");
+  const priorUsage = output.nativeUsage.length > 0;
+  output.nativeUsage.push(native);
+  for (const key of keys) {
+    const count = tokens[key];
+    if (count !== null) {
+      output.usage[key] += count;
       output.usagePresence[key] = true;
     }
-  if (!known("cacheReadTokens") && known("cachedTokens")) {
-    output.usage.cacheRead += u.cachedTokens;
-    output.usagePresence.cacheRead = true;
-    output.cacheReadSource = "derived:Meta-cachedTokens";
   }
-  if (known("reasoningTokens"))
-    output.usage.reasoning = (output.usage.reasoning ?? 0) + u.reasoningTokens;
+  if (tokens.input !== null) output.usageInputSource = tokens.cacheRead === null || tokens.cacheWrite === null
+    ? "native:inputTokens;partial-cache-split"
+    : "derived:native-input-minus-cache-read-and-write";
+  if (native.cacheReadTokens === null && native.cachedTokens !== null)
+    output.cacheReadSource = "derived:Meta-cachedTokens";
+  if (native.reasoningTokens !== null)
+    output.usage.reasoning = (output.usage.reasoning ?? 0) + native.reasoningTokens;
   // Pi uses totalTokens as current context size, not cumulative spend.
-  if (finite(p.totalTokens)) output.usage.totalTokens = p.totalTokens;
-  output.usageTotalSource =
-    "native:last-session/tokenUsage.totalTokens (server-derived promptTokens+outputTokens)";
+  if (finite(p.totalTokens)) {
+    output.usage.totalTokens = p.totalTokens;
+    output.usageTotalSource = "native:last-session/tokenUsage.totalTokens (server-derived promptTokens+outputTokens)";
+  }
   const cost = output.usage.cost;
-  const rates = museModelCost(output.model);
-  const priced = rates.input !== null;
-  for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const)
-    cost[key] = rates[key] === null ? null : (output.usage[key] * rates[key]) / 1e6;
-  cost.total = priced ? cost.input + cost.output + cost.cacheRead + cost.cacheWrite : null;
-  output.costSource = priced
-    ? "derived:Pi1.5.0-meta-muse-spark-1.3-contributor-price-table;not-subscription-billing"
-    : "unknown:no-applicable-price-table;not-subscription-billing";
-  output.costPartial =
-    !priced ||
-    !output.usagePresence.input ||
-    !output.usagePresence.output ||
-    !output.usagePresence.cacheRead;
+  if (referenceCost) {
+    for (const key of [...keys, "total"] as const)
+      cost[key] = (cost[key] ?? 0) + referenceCost[key];
+    output.costSource = referenceCostSource;
+  } else if (!priorUsage || cost.total == null) {
+    Object.assign(cost, UNKNOWN_RATES, { total: null });
+    output.costSource = referenceCostSource;
+  }
+  output.costPartial = referenceCostPartial || (priorUsage && output.costPartial === true);
   output.nativeCumulativeCost = finite(p.cumulative?.cost?.usd)
-    ? {
-        usd: p.cumulative.cost.usd,
-        partial: p.cumulative.cost.partial === true,
-        source: "native:server-estimate;cumulative;not-added",
-      }
+    ? { usd: p.cumulative.cost.usd, partial: p.cumulative.cost.partial === true, source: "native:server-estimate;cumulative;not-added" }
     : null;
 }

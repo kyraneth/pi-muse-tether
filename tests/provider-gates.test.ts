@@ -10,6 +10,18 @@ afterEach(() => {
   delete process.env.PI_MUSE_TETHER_SYSTEM_PROMPT;
 });
 describe("pre-spawn Muse boundaries", () => {
+  it("strict refuses the native opt-in before even observing a payload", async () => {
+    vi.stubEnv("PI_MUSE_TETHER_NATIVE_SEARCH", "1");
+    vi.stubEnv("PI_MUSE_TETHER_STRICT", "1");
+    try {
+      const onPayload = vi.fn();
+      const result = await qualifiedStream({...model,id:"muse-ember-1.0"}, {messages:[message],tools:[]}, {onPayload}).result();
+      expect(result.stopReason).toBe("error");
+      expect(result.errorMessage).toContain("PI_MUSE_TETHER_STRICT=1 refuses");
+      expect(openMuseHost).not.toHaveBeenCalled();
+      expect(onPayload).not.toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("fails an unqualified live model loudly instead of silently dropping Pi instructions",async()=>{
     const result=await qualifiedStream({...model,id:"not-a-muse-model"},{messages:[message],tools:[]}).result();
     expect(result.stopReason).toBe("error");expect(result.errorMessage).toContain("not qualified");expect(openMuseHost).not.toHaveBeenCalled();
@@ -33,7 +45,7 @@ describe("pre-spawn Muse boundaries", () => {
     process.env.PI_MUSE_TETHER_SYSTEM_PROMPT = "replace";
     const result = await streamViaMuse(
       model,
-      { messages: [message], tools: [{ name: "fixture" }] },
+      { messages: [message], tools: [{ name: "fixture", description: "Fixture", parameters: { type: "object" } }] },
       {},
     ).result();
     expect(result.stopReason).toBe("error");

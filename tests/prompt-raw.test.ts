@@ -22,12 +22,20 @@ const model:any={id:"echo",provider:"pi-muse-tether"};
 const tools=[{name:"read",description:"synthetic",parameters:{type:"object",properties:{path:{type:"string"}}}}];
 const user=(content:string)=>({role:"user",content});
 const providers:any[]=[];
-const factory=(qualified=true)=>{
- const p=createMuseProvider({openHost:openFixtureHost,...(qualified?{promptModes:["none","replace"] as any,promptMode:"replace" as any,instructionMechanisms:["private-settings-fixture"],rawCompletion:true}:{})});
+const factory=(qualified=true,catalogueEfforts?:string[])=>{
+ const p=createMuseProvider({openHost:options=>openFixtureHost({...options,catalogueEfforts}),...(qualified?{promptModes:["none","replace"] as any,promptMode:"replace" as any,instructionMechanisms:["private-settings-fixture"],rawCompletion:true}:{})});
  p.setSessionManager({getSessionId:()=>"owner",getSessionFile:()=>"synthetic.jsonl",getBranch:()=>[]});providers.push(p);return p;
 };
 const call=(p:any,messages:any[],systemPrompt="EXACT_PI_PROMPT\nkeep all bytes",declarations:any[]=tools,options={})=>p.streamViaMuse(model,{messages,tools:declarations,systemPrompt},options).result();
 afterEach(async()=>{for(const p of providers)await p.retireAll();providers.length=0;fixtureState.raw="success";fixtureState.coding="normal";fixtureState.opens=[];fixtureState.events=[];fixtureState.rawHold=undefined;fixtureState.rawStarted=undefined;fixtureState.codingBeforeRead=undefined;fixtureState.codingReadHold=undefined;fixtureState.nextId=0;fixtureState.reviewer=undefined;fixtureState.codingCloseHold=undefined;fixtureState.codingCloseStarted=undefined;});
+it("coding and raw stream entry points preserve an omitted effort until the host sees the live ladder",async()=>{
+ const p=factory(true,["ultra","high","minimal"]);
+ expect((await call(p,[user("coding fixture")])).stopReason).toBe("stop");
+ expect((await call(p,[user("summary fixture")],"SUMMARY",[])).stopReason).toBe("stop");
+ const refused=await call(p,[user("explicitly off")],"SUMMARY",[],{reasoning:"off"});
+ expect(refused.errorMessage).toContain("supported Pi levels: minimal, high");
+ expect(fixtureState.events.filter((e:any)=>e.kind==="input").map((e:any)=>[e.purpose,e.effort])).toEqual([["coding","minimal"],["raw","minimal"]]);
+});
 it("qualified fixture sends exact prompt; changes retire and do not reuse stale settings",async()=>{
  const p=factory();const first=await call(p,[user("one")]);
  expect(first.stopReason,first.errorMessage).toBe("stop");expect(fixtureState.opens[0].settings.run.system_prompt).toBe("EXACT_PI_PROMPT\nkeep all bytes");
@@ -54,11 +62,22 @@ it("tools-empty summary routing id may equal coding owner and never touches that
  expect(fixtureState.opens[1].closed).toBe(true);expect(fixtureState.opens[1].schemaPath).toBeUndefined();expect(fixtureState.opens[1].settings.run.toolset).toEqual([]);expect(fixtureState.opens[0].closed).toBe(false);
  await call(p,[user("one"),first,user("two")]);expect(fixtureState.opens).toHaveLength(2);
 });
-it.each(["helper","tool","failure","no-usage"])("summary %s fails without retiring coding host",async(kind)=>{
+it.each(["helper","tool","failure","no-usage","mismatch"])("summary %s fails without retiring coding host",async(kind)=>{
  const p=factory();const first=await call(p,[user("one")]);fixtureState.raw=kind;
  const summary=await call(p,[user("summarize")],"SUMMARIZER",[],{sessionId:"different-routing-id"});
  expect(summary.stopReason).toBe("error");expect(summary.content).toEqual([]);expect(fixtureState.opens[0].closed).toBe(false);
  expect((await call(p,[user("one"),first,user("two")])).stopReason).toBe("stop");expect(fixtureState.opens).toHaveLength(2);
+});
+it("one-shot tool-free chat projects history and typed parts without a journal or bridge",async()=>{
+ const p=factory();p.setSessionManager(undefined);
+ const first=await call(p,[user("embedded history marker")],"CHAT",[]);
+ const image={type:"image",data:"c3dhdGNo",mimeType:"image/png"};
+ const second=await call(p,[user("embedded history marker"),first,{role:"user",content:[{type:"text",text:"Look"},image,{type:"text",text:"then answer"}]}],"CHAT",[]);
+ expect(second.stopReason,second.errorMessage).toBe("stop");
+ expect(fixtureState.opens.map(row=>[row.purpose,row.schemaPath,row.closed])).toEqual([["raw",undefined,true],["raw",undefined,true]]);
+ const projected=fixtureState.events.filter(row=>row.kind==="input").at(-1).text;
+ expect(projected).toContain("embedded history marker");
+ expect(projected).toContain("BEGIN PI HISTORY JSON");
 });
 it("unqualified tools-empty refusal leaves an existing coding host parked",async()=>{
  const p=factory(false);const first=await call(p,[user("one")]);

@@ -15,7 +15,7 @@ function factory(){
  }});
  p.setSessionManager({getSessionId:()=>"owner",getSessionFile:()=>"fixture.jsonl",getBranch:()=>[]});providers.push(p);return {p,seen};
 }
-afterEach(async()=>{await Promise.all(providers.splice(0).map(p=>p.retireAll()));fixtureState.opens=[];fixtureState.events=[];fixtureState.raw="success";fixtureState.coding="normal";});
+afterEach(async()=>{await Promise.all(providers.splice(0).map(p=>p.retireAll()));fixtureState.opens=[];fixtureState.events=[];fixtureState.raw="success";fixtureState.coding="normal";fixtureState.beforeTurnStart=undefined;});
 it.each([false,true])("payload replacement is effective before official SDK admission raw=%s",async raw=>{
  const {p,seen}=factory();const observed:string[]=[];
  const result=await p.streamViaMuse(model,context(raw),{
@@ -26,7 +26,7 @@ it.each([false,true])("payload replacement is effective before official SDK admi
  expect(result.stopReason,result.errorMessage).toBe("stop");expect(observed.length).toBeGreaterThan(1);
  expect(fixtureState.events.find((e:any)=>e.kind==="input").text).toContain("REPLACED_INPUT");
  expect(fixtureState.opens[0].settings.run.system_prompt).toBe("REPLACED_SYSTEM");
- if(!raw){expect(seen[0].options.tools).toEqual(["keep"]);expect(seen[0].options.validateApproval({toolName:"mcp__pi__removed",toolCallId:"bad",rawArgs:"{}"})).toBe(false);expect(JSON.stringify(seen[0].schema)).toContain("Images attached to failed tool results are omitted");expect(JSON.stringify(seen[0].schema)).not.toContain('"name":"removed"');}
+ if(!raw){expect(seen[0].options.tools).toEqual(["keep"]);expect(seen[0].options.validateApproval({toolName:"mcp__pi__removed",toolCallId:"bad",rawArgs:"{}"})).toBe(false);expect(seen[0].schema.tools).toEqual([{name:"keep",description:"keep",inputSchema:{type:"object"}}]);expect(JSON.stringify(seen[0].schema)).not.toContain('"name":"removed"');}
 });
 it.each([false,true])("throwing payload hook yields one error and no host/submission raw=%s",async raw=>{
  const {p,seen}=factory();const events=[];for await(const e of p.streamViaMuse(model,context(raw),{onPayload:async()=>{throw Error("hook denied");}}))events.push(e);
@@ -43,3 +43,27 @@ it.each([false,true])("throwing stream observer produces one error without norma
 });
 it("logical replacement with system-role messages fails before host rather than ignoring explicit fields",async()=>{const {p,seen}=factory();const result=await p.streamViaMuse(model,context(),{onPayload:(payload:any)=>({...payload,messages:[{role:"system",content:"ambiguous"},...payload.messages]})}).result();expect(result.stopReason).toBe("error");expect(result.errorMessage).toContain("edit logical systemPrompt and tools instead");expect(seen).toEqual([]);});
 it("replacement tools-empty request takes qualified raw path",async()=>{const {p,seen}=factory();expect((await p.streamViaMuse(model,context(),{onPayload:(payload:any)=>({...payload,tools:[]})}).result()).stopReason).toBe("stop");expect(seen[0].options.purpose).toBe("raw");});
+
+it.each([false,true])("refusal observation survives direct observer throw and abort raw=%s",async raw=>{
+ const {p}=factory();const abort=new AbortController();
+ fixtureState.beforeTurnStart=({refuse}:any)=>{
+  refuse({code:-32001,message:"Synthetic plan exhausted",data:{kind:"quota_exceeded",httpStatus:429}});
+  return true;
+ };
+ let enter!:()=>void,release!:()=>void;
+ const entered=new Promise<void>(resolve=>enter=resolve),held=new Promise<void>(resolve=>release=resolve);
+ const responses:any[]=[],events:any[]=[];
+ const stream=p.streamViaMuse(model,context(raw),{signal:abort.signal,onResponse:async(response:any)=>{
+  responses.push(response);enter();await held;throw new Error("Observer failed HTTP 429");
+ }});
+ const drained=(async()=>{for await(const event of stream)events.push(event);})();
+ try {
+  expect(await Promise.race([entered.then(()=>"entered"),drained.then(()=>"finished")])).toBe("entered");
+  abort.abort();
+  expect(events).toEqual([]);
+ } finally {release();await drained;}
+ expect(responses.map(row=>row.headers["x-pi-tether-response"])).toEqual(["logical-refusal"]);
+ expect(events.map(row=>row.type)).toEqual(["error"]);
+ expect(events[0].error.errorMessage).toBe("Muse quota refused (quota exceeded); no replay: Synthetic plan exhausted");
+ expect(fixtureState.events.filter((event:any)=>event.kind==="input")).toHaveLength(1);
+});

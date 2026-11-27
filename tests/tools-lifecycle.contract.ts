@@ -78,12 +78,15 @@ async function fixture(mode="parallel") {
     notify("turn/started",{turnId,commandId:p.commandId});started.resolve();
     if(mode==="death")queueMicrotask(()=>host.hostExited({kind:"transportEof"}));
     else if(mode.startsWith("retry"))queueMicrotask(()=>{
-     notify(state.retryMethod??"turn/modelRetryScheduled",{...vendorRetry.retry.params,sessionId:"fixture",turnId,...state.retryMutation});
+     // Optional open-vocabulary members are absent, not `undefined`, in an old log.
+     const retry=Object.fromEntries(Object.entries({...vendorRetry.retry.params,sessionId:"fixture",turnId,...state.retryMutation}).filter(([,v])=>v!==undefined));
+     notify(state.retryMethod??"turn/modelRetryScheduled",retry);
      if(mode==="retry-complete")notify("turn/completed",{turnId,terminal:"completed"});
      if(mode==="retry-fail-no-status")notify("turn/modelRetryScheduled",{...vendorRetry.retry.params,sessionId:"fixture",turnId,httpStatus:undefined,errorKind:"transient"});
      if(mode.startsWith("retry-fail"))notify("turn/completed",{turnId,terminal:"failed",error:{kind:"modelError",message:"Attempts exhausted",retryable:true}});
     });
     else if(mode==="stream"){
+     notify("item/started",{turnId,item:{kind:"agentMessage",itemId:"text",turnId}});
      notify("item/delta",{turnId,itemId:"text",field:"text",delta:"Partial truthful text"});
      if(state.commands.filter((x:any)=>x.method==="turn/start").length>1)notify("turn/completed",{turnId,terminal:"completed"});
     }
@@ -459,7 +462,8 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
     await entered.promise;agent.abort();await abortSeen.promise;
     // Must retire BEFORE Pi returns the aborted tool result; provider re-entry
     // with an already-aborted signal must not make this proof pass by accident.
-    expect(f.host.fencedReason).toMatch(/Request aborted/);
+    await expect(f.host.submitInput("must not submit")).rejects.toThrow(/host closed/);
+    expect(f.host.fencedReason).toBeUndefined();
    }finally{release.resolve();await run;}
    await f.closed.promise;
    expect(runs).toBe(stage==="approval"?0:1);
@@ -569,8 +573,8 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
    else await f.textSeen.promise;
    abort.abort();
    if(mode!=="tool"){const result=await run;expect(result.stopReason).toBe("aborted");if(mode==="stream")expect(result.content[0].text).toBe("Partial truthful text");}
-   expect(f.host.fencedReason).toMatch(/Request aborted/);
    await f.closed.promise;
+   expect(f.host.fencedReason).toBeUndefined();
    expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
    expect(f.children.every((c:any)=>c.exitCode!==null)).toBe(true);
    if(mode==="approval")expect(f.children).toHaveLength(0);
@@ -616,6 +620,20 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
   expect(statuses.some(s=>s?.includes("HTTP 503"))).toBe(true);expect(statuses.at(-1)).toBeUndefined();
   expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
  });
+ it.each([
+  {errorKind:null,httpStatus:503},
+  {errorKind:null,httpStatus:null},
+  {},
+ ])("kindless turn retry continues with evidence of a vendor 503: %j",async(params)=>{
+  const f=await fixture("stream"),run=f.provider.streamViaMuse(model,f.context([user])).result();
+  await f.started.promise;
+  if(params.httpStatus == null) f.send("turn/modelRetryScheduled",{errorKind:"server",httpStatus:503});
+  f.send("turn/retryScheduled",params);
+  f.send("turn/completed",{terminal:"completed"});
+  expect((await run).stopReason).toBe("stop");
+  expect(f.host.fencedReason).toBeUndefined();
+  expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
+ });
  it("vendor retry after committed tools preserves one execution and receipts per call",async()=>{
   const f=await fixture("vendor-tools"),agent=await native(f);await agent.prompt(user as any);
   expect(f.toolRuns).toEqual(["a","b"]);expect(f.pending).toEqual(["a","b"]);
@@ -625,7 +643,7 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
  it("abort during vendor retry delay cancels the turn truthfully",async()=>{
   const f=await fixture("retry-hold"),abort=new AbortController();f.retrySeen=deferred();
   const run=f.provider.streamViaMuse(model,f.context([user]),{signal:abort.signal}).result();await f.retrySeen.promise;
-  expect(f.host.fencedReason).toBeUndefined();abort.abort();expect(f.host.fencedReason).toMatch(/Request aborted/);expect((await run).stopReason).toBe("aborted");await f.closed.promise;
+  expect(f.host.fencedReason).toBeUndefined();abort.abort();expect((await run).stopReason).toBe("aborted");await f.closed.promise;expect(f.host.fencedReason).toBeUndefined();
   expect(f.commands.some((c:any)=>c.method==="turn/cancel")).toBe(true);
   expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
  });
@@ -639,13 +657,22 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
   }
   expect(f.opens).toBe(1);expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
  });
- for(const mutation of [{errorKind:"newUnknownKind"},{errorKind:"server",httpStatus:403},{errorKind:"authRequired"},{errorKind:"quotaExceeded"},{errorKind:"client_attestation_denied"},{errorKind:"server",code:"plan_usage_limit_exceeded"},{errorKind:"server",error:{kind:"modelError",quota:{}}}]){
-  it(`retry refusal stays first and unknown kinds stop: ${JSON.stringify(mutation)}`,async()=>{
+ it.each([{errorKind:null,httpStatus:null},{},{errorKind:null,httpStatus:400}])("kindless retry without same-turn 5xx is reported, never fatal: %j",async(params)=>{
+  const f=await fixture("stream"),run=f.provider.streamViaMuse(model,f.context([user])).result();
+  await f.started.promise;
+  f.send("turn/retryScheduled",params);
+  f.send("turn/completed",{terminal:"completed"});
+  expect((await run).stopReason).toBe("stop");
+  expect(f.host.fencedReason).toBeUndefined();
+  expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
+ });
+ for(const mutation of [{errorKind:"server",httpStatus:403},{errorKind:"authRequired"},{errorKind:"quotaExceeded"},{errorKind:"client_attestation_denied"},{errorKind:"server",code:"plan_usage_limit_exceeded"},{errorKind:"server",error:{kind:"modelError",quota:{}}}]){
+  it(`retry refusal stays first: ${JSON.stringify(mutation)}`,async()=>{
    const f=await fixture("retry-complete");f.retryMutation=mutation;
    const result=await f.provider.streamViaMuse(model,f.context([user])).result();expect(result.stopReason).toBe("error");
    const quota = mutation.errorKind === "quotaExceeded" || mutation.code === "plan_usage_limit_exceeded" || !!mutation.error;
-   expect(f.host.fencedReason).toMatch(quota ? /quota refused/ : mutation.errorKind==="newUnknownKind" ? /unknown retry kind/ : /latched/);
-   await expect(f.host.submitInput("never retry")).rejects.toThrow(quota ? /quota refused/ : mutation.errorKind==="newUnknownKind" ? /unknown retry kind/ : /latched/);
+   expect(f.host.fencedReason).toMatch(quota ? /quota refused/ : /latched/);
+   await expect(f.host.submitInput("never retry")).rejects.toThrow(quota ? /quota refused/ : /latched/);
    if (quota) {
     const {assertMusePolicySafe,museLaunchOptions}=await import("../src/host.js"); expect(assertMusePolicySafe).not.toThrow();
     expect(()=>museLaunchOptions({cwd:process.cwd(),tools:["lookup"],promptMode:"none",echo:true})).not.toThrow();
@@ -653,6 +680,19 @@ describe("real SDK + real MCP broker on supplied fixtures, offline",()=>{
    expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
   });
  }
+ it.each([{errorKind:"newUnknownKind"},{errorKind:undefined,httpStatus:undefined,reason:"recorded upstream failure"},{httpStatus:402}])("an unknown or unclassified retry kind is reported, never fatal: %j",async(mutation)=>{
+  const {setRetryStatusListener}=await import("../src/retry-status.js");const statuses:any[]=[];setRetryStatusListener(s=>statuses.push(s));
+  try{
+   const f=await fixture("retry-complete");f.retryMutation=mutation;
+   const result=await f.provider.streamViaMuse(model,f.context([user])).result();
+   expect(f.host.fencedReason).toBeUndefined();expect(result.stopReason).toBe("stop");
+   const shown=statuses.filter(Boolean).join(" | ");
+   expect(shown).not.toContain("undefined");
+   expect(shown).toMatch(mutation.reason ? new RegExp(mutation.reason) : mutation.errorKind ? new RegExp(mutation.errorKind) : /HTTP 402/);
+   expect(statuses.at(-1)).toBeUndefined(); // the terminal clears the retry status
+   expect(f.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
+  }finally{setRetryStatusListener(undefined);}
+ });
  it("does not refuse an ordinary turn solely for an unknown experimental build",async()=>{
   const {assertQualifiedVersions}=await import("../src/cli-version.js");
   expect(()=>assertQualifiedVersions("Muse Code 1.4.14 (1.4.14-R7309.1)","1.4.14")).not.toThrow();

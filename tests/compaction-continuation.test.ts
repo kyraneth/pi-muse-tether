@@ -1,3 +1,4 @@
+import {fixtureMeasureTurn} from "./fixture-measure.js";
 import {afterEach,expect,it} from 'vitest';
 import {convertToLlm} from '@earendil-works/pi-coding-agent';
 import {createMuseProvider} from '../src/provider.js';
@@ -8,7 +9,7 @@ const messages=()=>[{role:'compactionSummary',summary:'COMMITTED_TASK',tokensBef
 const providers:any[]=[];
 function factory(death=false){
  const state:any={messages:messages(),branch:[{id:'commit-1',type:'compaction'}],death};
- const p=createMuseProvider({openHost:async(options:any)=>state.death?({retrySafe:false,submitInput:async()=>options.onEvent({kind:'fenced',reason:'Host died'}),fence(){},close:async()=>{}} as any):openFixtureHost(options)});providers.push(p);
+ const p=createMuseProvider({openHost:async(options:any)=>state.death?({retrySafe:false,measureTurn:fixtureMeasureTurn,submitInput:async()=>options.onEvent({kind:'fenced',reason:'Host died'}),fence(){},close:async()=>{}} as any):openFixtureHost(options)});providers.push(p);
  p.setSessionManager({getSessionId:()=> 'compaction-seed',getSessionFile:()=> 'offline.jsonl',getBranch:()=>state.branch,buildSessionProjection:()=>({messages:state.messages})});
  state.p=p;state.run=(ms=convertToLlm(state.messages as any))=>p.streamViaMuse(model,{messages:ms,tools},{}).result();
  state.commit=(reason='threshold')=>p.committedCompaction({reason,willRetry:reason==='overflow',compactionEntry:state.branch.at(-1)});

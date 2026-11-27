@@ -1,3 +1,4 @@
+import {fixtureMeasureTurn} from "./fixture-measure.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -29,6 +30,7 @@ vi.mock("../src/host.js", () => ({
       },
     });
     return {
+      measureTurn:fixtureMeasureTurn,
       async submitInput() {
         control.submitted++;
         control.submitEntered?.();

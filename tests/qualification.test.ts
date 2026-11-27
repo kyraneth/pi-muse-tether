@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { qualifyClient, runLiveQualificationWorker, schemaCompatibility } from "../src/qualification.js";
+import { qualificationModel, qualifyClient, runLiveQualificationWorker, schemaCompatibility } from "../src/qualification.js";
 import { readQualification, writeQualification, batchEligibility, qualifiedBatchBuilds } from "../src/qualification-records.js";
 const fixtures = JSON.parse(readFileSync(new URL("../assets/batch-boundary-schemas.json",import.meta.url),"utf8"));
 const build = "1.4.20-R8619.1";
@@ -39,6 +41,18 @@ else process.exit(91);
   process.env.PI_MUSE_TETHER_BINARY = path;
   return {path,calls};
 }
+it("qualifies the selected picker recipe with its actual supported floor and limits",() => {
+  const catalogue=JSON.parse(readFileSync(new URL("./fixtures/provider-catalog-window.json",import.meta.url),"utf8"));
+  const row=catalogue.models.find((m:any)=>m.modelId === "muse-wonder-1.0");
+  row.variants=["ultra","high","minimal"]; row.defaultReasoningEffort="ultra";
+  const {model,thinkingLevel}=qualificationModel(catalogue, "muse-wonder-1.0-contributor");
+  expect(model).toMatchObject({id:"muse-wonder-1.0-contributor",contextWindow:row.contextLimit,maxTokens:row.outputLimit,thinkingLevelMap:{off:null,minimal:"minimal",high:"high"}});
+  expect(thinkingLevel).toBe("minimal");
+  expect(()=>qualificationModel({...catalogue,source:"bundledCatalog"},model.id)).toThrow(/providerCatalog/);
+  expect(()=>qualificationModel(catalogue,"muse-unknown-1.0")).toThrow(/providerCatalog/);
+  row.variants=["ultra"];
+  expect(()=>qualificationModel(catalogue,model.id)).toThrow(/providerCatalog/);
+});
 describe("recorded schema contracts",() => {
   it.each([0,1])("accepts retained schema fixture %i without a build allowlist", index => {
     expect(schemaCompatibility(fixtures.schemas[index]).compatible).toBe(true);
@@ -78,6 +92,47 @@ describe("qualification entry point (offline only)",() => {
     }
     expect(readFileSync(fixture.path)).toEqual(bytes);
     expect(process.env).toEqual(envBefore);
+  });
+  it("starts the live qualification worker with Pi core visible only through the installed coding agent", () => {
+    const fixture = binary();
+    const modules = join(home, "node_modules");
+    const installed = join(modules, "pi-muse-tether");
+    const source = new URL("../", import.meta.url);
+    for (const scope of ["@earendil-works", "@muse-code"]) mkdirSync(join(modules, scope), {recursive:true});
+    mkdirSync(installed);
+    for (const entry of ["src", "assets", "package.json"]) cpSync(new URL(entry, source), join(installed, entry), {recursive:true});
+    // Peers/dependencies are visible to the installed extension, but the
+    // coding agent's transitive dependencies are not hoisted into this tree.
+    for (const name of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "@muse-code/sdk", "pi-tether-core"])
+      symlinkSync(fileURLToPath(new URL(`node_modules/${name}`, source)), join(modules, name), "dir");
+    const qualification = join(installed, "src/qualification.ts");
+    const config = join(home, "config");
+    mkdirSync(join(config, "muse"), {recursive:true});
+    writeFileSync(join(config, "muse/auth.json"), "{}\n");
+    const code = `
+      import assert from "node:assert/strict";
+      import {createRequire} from "node:module";
+      import {pathToFileURL} from "node:url";
+      const entry = process.argv[1];
+      const local = createRequire(entry);
+      assert.throws(() => local.resolve("@earendil-works/pi-agent-core"), {code:"MODULE_NOT_FOUND"});
+      const fromPi = createRequire(import.meta.resolve("@earendil-works/pi-coding-agent"));
+      const {createJiti} = await import(pathToFileURL(fromPi.resolve("jiti")).href);
+      // This one-shot loader proof needs no cache, least of all Jiti's /tmp fallback.
+      const {qualifyClient} = await createJiti(entry, {fsCache:false}).import(entry);
+      const record = await qualifyClient(${JSON.stringify(build)}, true, "muse-wonder-1.0");
+      console.log(JSON.stringify(record.results.live.privatePrompt));
+    `;
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", code, qualification], {
+      cwd:home, encoding:"utf8", env:{PATH:process.env.PATH, HOME:home, TMPDIR:home, XDG_CONFIG_HOME:config,
+        MUSE_NO_AUTO_UPDATE:"1", PI_MUSE_TETHER_LIVE:"1", PI_MUSE_TETHER_BINARY:fixture.path,
+        PI_MUSE_TETHER_QUALIFICATION_HOME:join(home,"records")},
+    });
+    // The fixture logs discovery, then exits without ever contacting a model.
+    // A bad import instead stops before the discovery process is launched.
+    expect(output).not.toMatch(/MODULE_NOT_FOUND|Cannot find (package|module)/);
+    const calls = readFileSync(fixture.calls,"utf8").trim().split("\n").map(line=>JSON.parse(line));
+    expect(calls.map(row=>row.args[0]), output).toContain("serve");
   });
   it("matching qualification data enables optional batching without a code change, and identity drift invalidates the cache",async()=>{
     const fixture=binary(), record=await qualifyClient();

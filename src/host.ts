@@ -1,18 +1,22 @@
 import { resolveMuseBinary, batchEligibility, clientBuildLabel } from "./qualification-records.js";
 import { featureNotice, featureActive, MuseFeatureUnavailable } from "./features.js";
 import { committedCalls } from "./batch-schema.js";
-import { qualifyMuseVersion } from "./cli-version.js";
-import { museEffort } from "./thinking-config.js";
-import { publishQuota, quotaExhausted } from "./rate-limit.js";
+import { isNewerThanTestedCli, qualifyMuseVersion } from "./cli-version.js";
+import { catalogueIdentity, refreshCatalogueFromHost } from "./catalog-cache.js";
+import { resolveMuseEffort } from "./thinking-config.js";
+import { museCatalogAssessment } from "./catalog.js";
+import { hasQuotaData, publishQuota, quotaExhausted, quotaExhaustedResetIso } from "./rate-limit.js";
+import { retryCause } from "./retry-status.js";
 import { MuseLedger } from "./request-ledger.js";
 import type { TurnInputPart } from "./wire-types.js";
-import { homedir, tmpdir } from "node:os";
-import { createHash } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { NATIVE_SEARCH_TOOL, nativeSearchRefusal, strictMuse, searchQuery, searchSources, type NativeSearchEntry } from "./native-search.js";
+import { homedir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
+import { inputParts, MUSE_INBOUND_FRAME_LIMIT_BYTES, MuseFrameOverInboundLimit, turnStartFrameBytes } from "./turn-plan.js";
+import { rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { isAbsolute, join } from "node:path";
-import { writePromptSettings, privateWorkspace, promptSettings, discoverSkillsOff, linkHostLogin, assertLoginSafe, type SkillsOff } from "./settings.ts";
-import { writeFile } from "node:fs/promises";
+import { createVendorRoot, vendorProcessEnv, seedVendorCatalogue, writePromptSettings, privateWorkspace, promptSettings, museToolset, discoverSkillsOff, linkHostLogin, assertLoginSafe, type SkillsOff } from "./settings.ts";
 import {
   Connection, DiscardedSessions, MspError, Session, readSessionDurability,
   spawnMspConnection,
@@ -23,16 +27,31 @@ import {
 /** Inventory recheck pacing while Muse 1.4.15 starts session MCP (~200 ms measured). */
 const MCP_READY_RECHECK_MS = 25;
 
+export {MUSE_INBOUND_FRAME_LIMIT_BYTES,MuseFrameOverInboundLimit} from "./turn-plan.js";
+
+/** The client's own refusal of an oversized frame, reported with its limit. */
+function inputTooLarge(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const value = error as Record<string, any>;
+  const kind = value.kind ?? value.errorKind ?? value.data?.kind;
+  if (value.code !== -32002 || kind !== "inputTooLarge") return undefined;
+  const limit = value.data?.limitBytes ?? value.limitBytes;
+  return typeof limit === "number" && limit > 0 ? limit : MUSE_INBOUND_FRAME_LIMIT_BYTES;
+}
+
+type StagedTerminal = Extract<MuseHostEvent,{kind:"terminal"}>;
 type InitializeResult = Parameters<typeof readSessionDurability>[0];
 export type MuseApproval = Parameters<ApprovalHandler>[0];
 export type MuseFrame = { method: string; params?: Record<string, unknown> };
 export type MuseHostEvent =
   | { kind: "frame"; frame: MuseFrame }
-  | { kind: "terminal"; turnId: string; status: "completed" | "cancelled" | "failed"; frame: MuseFrame; lastRetryHttpStatus?: number }
+  | { kind: "terminal"; turnId: string; status: "completed" | "cancelled" | "failed"; frame: MuseFrame; lastRetryHttpStatus?: number; lastRetryCause?: string }
+  | { kind: "admission-refused"; httpStatus?: number }
   | { kind: "fenced"; reason: string }
   | { kind: "degraded"; feature: "rawLog"; reason: string }
   | { kind: "tool-batch"; calls: Array<{callId:string;name:string;args:Record<string,unknown>}> }
-  | { kind: "auth-metadata"; metadata: unknown }; 
+  | { kind: "native-search"; entry: NativeSearchEntry }
+  | { kind: "auth-metadata"; metadata: unknown };
 
 export interface MuseHostOptions {
   cwd: string;
@@ -42,8 +61,9 @@ export interface MuseHostOptions {
   qualificationProbe?: boolean;
   clientBuild?: string;
   purpose?: "coding" | "raw";
+  /** Separately permitted on a live, journal-owned chat, never a replay stage. */
+  nativeSearch?: boolean;
   piSessionId?: string;
-  reasoningEffort?: ReturnType<typeof museEffort>;
   /** Filled from official model/list by openMuseHost, not a guessed ladder. */
   catalogueEfforts?: readonly string[];
   /** Private supported settings; session/start MUST name this host's cwd. */
@@ -107,13 +127,58 @@ export function serverRequiresUpgrade(error: unknown, seen = new Set<unknown>())
   if ([value.status,value.httpStatus,value.code].includes(426) || [value.kind,value.errorKind,value.code].some(v => typeof v === "string" && /^(upgrade_required|client_version_unsupported|minimum_client_version|client_upgrade_required)$/.test(v))) return true;
   return [value.error,value.data,value.cause].some(nested => serverRequiresUpgrade(nested,seen));
 }
+const QUOTA_EXHAUSTION_MESSAGE = /quota\s*(?:exhausted|exceeded|limit|reached)|insufficient_quota|usage\s+limit\s+reached|plan\s+limit/i;
+
+/**
+ * Definitive quota exhaustion only. Temporary HTTP 429 / rate-limit bursts
+ * belong to Muse Code's own retry chain and must not be fenced as exhausted
+ * subscription quota.
+ */
 function quotaDenial(error: unknown, seen = new Set<unknown>()): boolean {
   if (!error || typeof error !== "object" || seen.has(error)) return false;
   seen.add(error);
   const value = error as Record<string, unknown>;
-  if ([value.status, value.httpStatus, value.statusCode, value.code].includes(429) || value.quota !== undefined ||
-      [value.errorKind, value.kind, value.code].some(v => typeof v === "string" && /quota|plan.*limit|rate.?limit/i.test(v))) return true;
+  if (value.quota !== undefined && value.quota !== null && typeof value.quota === "object") return true;
+  if ([value.errorKind, value.kind, value.code].some(v => typeof v === "string" && /quota|plan.*limit/i.test(v))) return true;
+  if ([value.message, value.reason].some(v => typeof v === "string" && QUOTA_EXHAUSTION_MESSAGE.test(v))) return true;
   return [value.data, value.error, value.cause].some(nested => quotaDenial(nested, seen));
+}
+
+function quotaDetails(error: unknown, seen = new Set<unknown>()): { limitKind?: string; resetsAtMs?: number; message?: string } {
+  if (!error || typeof error !== "object" || seen.has(error)) return {};
+  seen.add(error);
+  const value = error as Record<string, any>;
+  let limitKind = typeof value.quota?.limitKind === "string" && value.quota.limitKind ? value.quota.limitKind : undefined;
+  let resetsAtMs = typeof value.quota?.resetsAtMs === "number" && Number.isFinite(value.quota.resetsAtMs)
+    ? value.quota.resetsAtMs
+    : typeof value.resetsAtMs === "number" && Number.isFinite(value.resetsAtMs)
+      ? value.resetsAtMs
+      : undefined;
+  let message = [value.message, value.reason].find((v): v is string => typeof v === "string" && v.trim().length > 0)?.trim();
+  for (const nested of [value.error, value.data, value.cause]) {
+    if (!nested || nested === error) continue;
+    const child = quotaDetails(nested, seen);
+    limitKind ??= child.limitKind;
+    resetsAtMs ??= child.resetsAtMs;
+    message ??= child.message;
+  }
+  return { limitKind, resetsAtMs, message };
+}
+
+/**
+ * Format a quota fence preserving the provider's message and reset time while
+ * keeping "quota exceeded" in the prefix so Pi never auto-retries even when the
+ * provider text contains "429" or "rate_limit_error".
+ */
+function quotaFenceMessage(error: unknown): string {
+  const { limitKind, resetsAtMs, message } = quotaDetails(error);
+  const meta = [limitKind, resetsAtMs !== undefined ? `resets at ${new Date(resetsAtMs).toISOString()}` : undefined]
+    .filter(Boolean)
+    .join(", ");
+  const detail = [meta, message].filter(Boolean).join(" — ");
+  return detail
+    ? `Muse quota refused (quota exceeded); no replay: ${detail}`
+    : "Muse quota refused (quota exceeded); no replay";
 }
 
 const canonical = (v:any):string => v && typeof v === "object"
@@ -126,6 +191,8 @@ function validateOptions(options: MuseHostOptions): void {
     throw new Error("Muse contributor mode must be on or off");
   const candidate = options.privatePrompt !== undefined && options.promptMode === "replace";
   const appended = options.privatePrompt !== undefined && options.promptMode === "append";
+  if (options.nativeSearch && strictMuse()) throw new Error(nativeSearchRefusal);
+  if (options.nativeSearch && (options.echo || !candidate)) throw new Error("Muse native search requires live private prompt replacement; no prompt was sent.");
   if (options.privatePrompt && !candidate && !appended) throw new Error("Muse private prompt settings require replace or appended fallback mode");
   if (!options.echo) assertLoginSafe();
   if (options.promptMode !== "none" && !candidate && !appended) throw new Error("Muse prompt mode unsupported: no instruction mechanism");
@@ -145,12 +212,14 @@ export function museLaunchOptions(options: MuseHostOptions): SpawnMspConnectionO
   if (!isAbsolute(command)) throw new Error("Muse binary must be absolute");
   return {
     command,
+    connection: {mintRequestId:randomUUID},
     args: ["serve", ...(options.privatePrompt ? [] : ["--preset", "empty"]), "--no-session-log", "--contributor-mode", options.contributorMode ?? "on",
       // The disable-shell/write flags inject session-wide read-only developer
       // policy, incorrectly forbidding Pi MCP tools too. Supported named
       // selection removes native tools without making that false policy claim.
       // Apply at launch even without privatePrompt; [] keeps raw summaries empty.
-      "--config", `run.toolset=${JSON.stringify(options.tools.map(name => `mcp__pi__${name}`))}`,
+      "--config", `run.toolset=${JSON.stringify(museToolset(options.tools, options.nativeSearch))}`,
+      ...(options.nativeSearch ? ["--config", 'tools.web_search.mode="client"', "--config", "tools.web_fetch.enabled=false"] : []),
       "--disable-request-user-input", ...(options.echo ? ["--provider", "echo"] : [])],
     cwd: options.cwd,
     env: Object.fromEntries(Object.entries({ ...process.env }).filter(([key]) => options.echo
@@ -160,9 +229,28 @@ export function museLaunchOptions(options: MuseHostOptions): SpawnMspConnectionO
   };
 }
 
+/** The private host owns one workspace, one Pi broker and one Muse session.
+ * Only the settings-file registry exposes Muse's per-server tool deadline.
+ * The same name in both registries is rejected by session/start. */
+function privatePiMcp(options: MuseHostOptions) {
+  if (!options.privateWorkspace) return undefined;
+  const pi = options.mcpServers?.pi as {transport?: string; command?: string; framing?: string} | undefined;
+  if (pi?.transport !== "stdio" || !pi.command) return undefined;
+  const framing = pi.framing === "lineDelimitedJson" ? "line_delimited_json"
+    : pi.framing === "contentLength" ? "content_length" : pi.framing;
+  return {
+    ...pi, framing, mode: "required",
+    // Muse documents no unlimited value. Match the Claude tether's existing
+    // one-hour DEFAULT_MCP_TOOL_TIMEOUT_MS (pi-claude-tether src/process-manager.ts).
+    // https://meta-models.github.io/muse-code-sdk/1.4/guides/extend/mcp-servers/
+    tool_timeout_sec: 3600,
+  };
+}
+
 /** Deliberately hides submit/replay/pending mutators from the driver-facing type. */
-type Submission = { commandId: string; turnId?: string; terminal: boolean; started: boolean;
-  admit?: () => void; refuse?: (error: Error) => void };
+type Submission = { commandId: string; turnId?: string; terminal: boolean; started: boolean; preIdentity?: MuseFrame[];
+  admit?: () => void; refuse?: (error: Error) => void;
+  searches?: Map<string, {itemId: string; query: string | null; completed: boolean}> };
 
 type SafeSession = Pick<Session, "sessionId" | "fold" | "apply" | "hostExited" |
   "onApproval" | "onApprovalError" | "stopRetrying"> & {
@@ -183,11 +271,13 @@ export class MuseHost {
   #reason?: string;
   #submission?: Submission;
   #busy = false;
-  #retrySafe = false;
+  #stage?: {complete:(event:StagedTerminal)=>void; reject:(error:Error)=>void};
+  #retrySafe = true; // No turn/start has been sent for this attempt.
   // Turn-scoped committed identities survive vendor stream retries and receipts.
   #committedCalls = new Map<string, string>();
   #committedBatches = new Set<string>();
   #lastRetryHttpStatus?: number;
+  #lastRetryCause?: string;
   #logSubscription?: number;
   #steers = new Set<string>();
   #discarded = new DiscardedSessions();
@@ -242,12 +332,15 @@ export class MuseHost {
   get sessionId(): string { if (!this.#session) throw new Error("Muse session not open"); return this.#session.sessionId; }
   get view(): SessionFoldView { if (!this.#session) throw new Error("Muse session not open"); return this.#session.fold; }
   get fencedReason(): string | undefined { return this.#reason; }
-  #degradedNotice = false;
+  #degradationRecorded = false;
   degradeBatches(reason: string) {
     this.#options.toolBatches=false;
-    if (!this.#degradedNotice) {
-      this.#degradedNotice=true;
-      console.warn(featureNotice(this.#options.clientBuild ?? "unknown build","rawLog",reason,"using sequential tools (no replay)"));
+    if (!this.#degradationRecorded) {
+      this.#degradationRecorded=true;
+      const build = this.#options.clientBuild ?? "unknown build", fallback = "using sequential tools (no replay)";
+      const notice = featureNotice(build,"rawLog",reason,fallback);
+      this.ledger.record("route_degraded",{build,feature:"rawLog",reason,fallback});
+      if (this.#busy) console.warn(notice); // An in-flight batch actually lost its rawLog path.
       this.#emit({kind:"degraded",feature:"rawLog",reason});
     }
   }
@@ -271,6 +364,11 @@ export class MuseHost {
   }
 
   #emit(event: MuseHostEvent): void {
+    if (this.#stage) {
+      if (event.kind === "terminal") this.#stage.complete(event);
+      if (event.kind === "fenced") this.#stage.reject(new Error(event.reason));
+      return; // A stage has no visible Pi episode, response hook or tool dispatch.
+    }
     try { this.#options.onEvent?.(event); }
     catch { this.fence("Muse event consumer failed"); }
   }
@@ -280,6 +378,8 @@ export class MuseHost {
     this.#assertLive();
     this.#opening = true;
     try {
+      const mcpServers = { ...this.#options.mcpServers };
+      if (privatePiMcp(this.#options)) delete mcpServers.pi;
       const raw = await this.connection.command("session/start", {
         approvalMode: "promptUnmatched",
         ...(this.#options.model === undefined ? {} : { modelId: this.#options.model }),
@@ -287,7 +387,7 @@ export class MuseHost {
         // the live qualification. Explicit workspace construction is essential;
         // the private trusted workspace keeps project rules out (settings.ts).
         ...(this.#options.privatePrompt ? {workspaceRoot: this.#options.privateWorkspace ?? this.#options.cwd} : {}),
-        config: { mcpServers: this.#options.mcpServers ?? {} },
+        config: { mcpServers },
       }, { maxAttempts: 1 }); // no engine retry/replay
       this.#assertLive();
       const result = raw as unknown as Extract<NonNullable<SessionOptions["opening"]>, { verb: "session/start" }>["result"];
@@ -311,7 +411,10 @@ export class MuseHost {
         // The native server remains the stage-race authority.
         return this.#decide(request);
       });
-      this.#session.onApprovalError((error) => { if(!this.#refusal(error))this.fence("Muse approval round trip failed"); });
+      this.#session.onApprovalError((failure) => {
+        if (!this.#refusal(failure) && (!this.#closing || "error" in failure && failure.error instanceof MspError))
+          this.fence("Muse approval round trip failed");
+      });
       if(this.batches) { try {
         const streams=await this.connection.command("log/streams",{sessionId:this.sessionId},{maxAttempts:1});
         const stream=(streams.streams as any[])?.map(s=>s.stream).find(s=>s?.kind==="session.live" && s.id===this.sessionId);
@@ -335,8 +438,8 @@ export class MuseHost {
       this.#assertLive();
       return this;
     } catch (error) {
-      this.#refusal(error);
-      this.fence(`Muse session open failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (!this.#refusal(error) && !this.#closing)
+        this.fence(`Muse session open failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     } finally {
       this.#opening = false;
@@ -387,16 +490,23 @@ export class MuseHost {
 
   /** The single ingress, also used by synthetic frame fixtures. */
   receive(frame: MuseFrame): void {
-    if(frame.method==="log/gap" && (frame.params as any)?.subscriptionId===this.#logSubscription){this.degradeBatches("rawLog gap");return;}
+    if (this.#closing && frame.method.startsWith("log/")) return;
+    if(frame.method==="log/gap" && (frame.params as any)?.subscriptionId===this.#logSubscription){
+      if (this.#stage) this.fence("Muse staged replay encountered a rawLog gap; no replay");
+      else this.degradeBatches("rawLog gap");
+      return;
+    }
     if(frame.method==="log/record") {
       const p=frame.params as any;
-      if(this.#logSubscription===undefined || p?.subscriptionId!==this.#logSubscription || this.#reason || this.#dead)return;
+      if(this.#logSubscription===undefined || p?.subscriptionId!==this.#logSubscription || this.#reason || this.#dead || this.#closing)return;
       const payload=p.record?.payload, event=payload?.event;
+      if(this.#stage && event?.kind==="assistant_tool_calls_committed") {this.fence("Muse staged replay attempted tool work; no replay");return;}
       if(this.batches && payload?.kind==="run" && event?.kind==="assistant_tool_calls_committed") {
         if(!this.#busy || payload.run_id!==this.#submission?.turnId){this.fence("Muse committed tool batch has foreign turn identity");return;}
         try {
           const calls=committedCalls(p);
-          if(!calls.length || calls.some((c:any)=>typeof c.callId!=="string"||!this.#tools.has(c.name)||!c.args||typeof c.args!=="object"||Array.isArray(c.args)))throw new Error("Malformed committed tool batch");
+          if (!calls.length || calls.some(c => !this.#tools.has(c.name) &&
+              !(this.#options.nativeSearch && c.name === NATIVE_SEARCH_TOOL))) throw new Error("Malformed committed tool batch");
           const signatures=calls.map((c:any)=>JSON.stringify([c.callId,c.name,canonical(c.args)]));
           const batch=JSON.stringify(signatures);
           if(this.#committedBatches.has(batch))return; // Same batch, including after receipts: never re-execute.
@@ -405,14 +515,18 @@ export class MuseHost {
           }
           calls.forEach((c:any,i:number)=>this.#committedCalls.set(c.callId,signatures[i]));
           this.#committedBatches.add(batch);
-          this.#emit({kind:"tool-batch",calls});
+          const piCalls = this.#options.nativeSearch ? calls.filter(c => this.#tools.has(c.name)) : calls;
+          if (piCalls.length) this.#emit({kind:"tool-batch",calls:piCalls});
         }catch{
           this.degradeBatches("Batch schema mismatch");
         }
       }
       return;
     }
-    if (frame.method === "usage/changed") { publishQuota(frame.params); this.ledger.quota(frame.params); return; }
+    if (frame.method === "usage/changed") {
+      if (hasQuotaData(frame.params)) { publishQuota(frame.params); this.ledger.quota(frame.params); }
+      return;
+    }
     if (typeof frame.params?.sessionId !== "string") return;
     if (this.#opening && !this.#session) { this.#held.push(frame); return; }
     if (this.#session && frame.params.sessionId === this.sessionId) this.#apply(frame);
@@ -439,29 +553,55 @@ export class MuseHost {
     }
     if (quotaDenial(params.error) || (retry && quotaDenial(params))) {
       this.#emit({kind:"frame",frame});
-      this.fence("Muse quota refused; no replay"); return;
+      this.fence(quotaFenceMessage(quotaDenial(params.error) ? params.error : params)); return;
     }
     if(retry){
       if(!this.#busy || params.turnId!==this.#submission?.turnId) {
         this.fence("Muse retry has foreign or inactive turn identity");return;
       }
-      // Only known transient kinds pass. Unknown/missing open-vocabulary kinds fail closed.
-      if(!["server","transient"].includes(String(params.errorKind)) ||
-        (params.httpStatus!==undefined && !(typeof params.httpStatus==="number" && params.httpStatus>=500 && params.httpStatus<=599))) {
-        this.#emit({kind:"frame",frame});
-        this.fence(`Muse nontransient or unknown retry kind: ${String(params.errorKind)} (HTTP ${String(params.httpStatus)})`);return;
-      }
+      // A scheduled retry is the vendor's own backoff inside an already admitted
+      // turn, and its durable kind vocabulary is open (`errorKind?: string`). Real
+      // Wonder Full turns sent a kindless `turn/retryScheduled` (2026-11-11T20:34
+      // and 20:43) with no 5xx anywhere in the turn, and the old fence ended them.
+      // An unknown or missing kind must not end live work; account, quota, policy
+      // and upgrade refusals were already decided above, and the terminal frame
+      // still reports the real outcome and status.
+      if(typeof params.httpStatus==="number" && Number.isFinite(params.httpStatus))this.#lastRetryHttpStatus=params.httpStatus;
+      const cause = retryCause(params);
+      if (cause) this.#lastRetryCause = cause;
     }
-    if(retry && typeof params.httpStatus==="number")this.#lastRetryHttpStatus=params.httpStatus;
-    if (frame.method === "session/closed" && this.#busy) {
-      this.fence("Muse session closed during pending work; no replay"); return;
+    if (frame.method === "session/closed") {
+      // Ingress already checked this host's session ID. Only the orderly
+      // shutdown of that session is expected after our SDK close began.
+      if (this.#closing && params.reason === "hostShutdown") return;
+      if (this.#busy) { this.fence("Muse session closed during pending work; no replay"); return; }
     }
     if (this.#reason && frame.method !== "turn/completed") return;
     const item = params.item as Record<string, unknown> | undefined;
-    if (this.#options.purpose === "raw" && (
+    const nativeSearch = this.#options.nativeSearch && !this.#stage && item?.kind === "toolCall" && item.tool === NATIVE_SEARCH_TOOL;
+    if (this.#options.nativeSearch && item?.kind === "webSearch") {
+      this.fence("Muse emitted hosted search under the client-only recipe"); return;
+    }
+    if ((this.#options.purpose === "raw" || this.#stage) && (
       frame.method.startsWith("approval/") || frame.method.startsWith("userInput/") ||
-      (item && !["agentMessage", "reasoning", "userMessage"].includes(String(item.kind)))
-    )) { this.fence("Muse raw completion emitted tool/helper activity"); return; }
+      (item && !nativeSearch && !["agentMessage", "reasoning", "userMessage"].includes(String(item.kind)))
+    )) { this.fence(this.#stage ? "Muse staged replay attempted tool/helper activity; no replay" : "Muse raw completion emitted tool/helper activity"); return; }
+    // Tool-free frames can precede the command response. Do not fold or
+    // publish them before we know which turn was admitted. Refusals and
+    // forbidden activity above still take effect synchronously.
+    const submission = this.#submission;
+    if ((this.#options.purpose === "raw" || this.#stage || nativeSearch) && submission && !submission.turnId &&
+        !["turn/started", "session/closed", "view/gap"].includes(frame.method) && !frame.method.includes("snapshot")) {
+      (submission.preIdentity ??= []).push(frame);
+      return;
+    }
+    if ((this.#options.purpose === "raw" || this.#stage) && frame.method.startsWith("item/")) {
+      const turnId = item?.turnId ?? params.turnId;
+      if (typeof turnId === "string" && turnId !== this.#submission?.turnId) {
+        this.fence("Muse tool-free item has foreign turn identity"); return;
+      }
+      if (this.#submission?.terminal) return; // Never buffer late transcript bytes into next chat turn.
+    }
     if (frame.method === "view/gap" || frame.method.includes("snapshot") ||
       (frame.method === "turn/foregroundCompleted" && Array.isArray(params.blockingAgents) && params.blockingAgents.length > 0) ||
       (item && ["reminderChild", "subagent", "workflow", "userShell"].includes(String(item.kind)))) {
@@ -476,13 +616,24 @@ export class MuseHost {
       }
       this.#submission.turnId = String(params.turnId);
       this.#submission.started = true;
+      this.#flushPreIdentity(this.#submission);
+      if (this.#reason) return;
       this.#submission.admit?.();
     }
     if (item?.kind === "userMessage" && item.commandId !== this.#submission?.commandId && !this.#steers.has(String(item.commandId))) {
       this.fence("Unsolicited Muse user input"); return;
     }
-    if (item?.kind === "toolCall" && !this.#tools.has(String(item.tool ?? item.toolName))) {
+    if (item?.kind === "toolCall" && !nativeSearch && !this.#tools.has(String(item.tool ?? item.toolName))) {
       this.fence("Undeclared Muse tool item"); return;
+    }
+    let search: NativeSearchEntry | undefined;
+    if (nativeSearch) {
+      if (this.#closing || submission?.terminal) return;
+      if (!submission?.turnId || !this.#busy || item.turnId !== submission.turnId) {
+        this.fence("Muse native search has foreign or inactive turn identity"); return;
+      }
+      search = this.#projectSearch(frame.method, item, submission);
+      if (this.#reason) return;
     }
     if (frame.method === "turn/completed" &&
       (!this.#submission?.turnId || params.turnId !== this.#submission.turnId ||
@@ -497,16 +648,23 @@ export class MuseHost {
         this.fence("Unexpected Muse user input request"); return;
       }
       if(!retry)this.ledger.observe(frame); // exactly once at ingress, never provider-buffer replay
-      if (!this.#reason) this.#emit({ kind: "frame", frame });
+      if (frame.method === "turn/completed") this.#submission!.terminal = true;
+      if (!this.#reason && !this.#closing) {
+        this.#emit({ kind: "frame", frame });
+        if (search) this.#emit({ kind: "native-search", entry: search });
+      }
       if (frame.method === "turn/completed") {
         if (policyDenial(params.error)) {
           this.fence(`Muse nonretryable provider refusal: ${JSON.stringify(params.error)}`);
         }
-        this.#submission!.terminal = true;
+        if (this.#closing) {
+          this.ledger.record("turn_terminal_during_close", { turnId: params.turnId, status: params.terminal });
+          return;
+        }
         const finish=()=>{
           if(this.#reason||this.#closing||this.#dead)return;
           this.#busy=false;
-          this.#emit({kind:"terminal",turnId:String(params.turnId),status:params.terminal as "completed"|"cancelled"|"failed",frame,lastRetryHttpStatus:this.#lastRetryHttpStatus});
+          this.#emit({kind:"terminal",turnId:String(params.turnId),status:params.terminal as "completed"|"cancelled"|"failed",frame,lastRetryHttpStatus:this.#lastRetryHttpStatus,lastRetryCause:this.#lastRetryCause});
         };
         // Do not release a completed coding turn (and permit a new auxiliary
         // host) until refresh metadata is known safe. No credential bytes read.
@@ -516,10 +674,44 @@ export class MuseHost {
     } catch { this.fence("Muse fold refused frame"); }
   }
 
+  #projectSearch(method: string, item: Record<string, unknown>, submission: Submission): NativeSearchEntry | undefined {
+    if (!["item/started", "item/updated", "item/completed"].includes(method)) return;
+    const { callId, itemId } = item;
+    if (typeof callId !== "string" || !callId || typeof itemId !== "string" || !itemId) {
+      this.fence("Muse native search lacks call identity"); return;
+    }
+    const searches = submission.searches ??= new Map();
+    const previous = searches.get(callId);
+    const observedQuery = searchQuery(item.args);
+    if (previous && (previous.itemId !== itemId || observedQuery !== null && previous.query !== null && previous.query !== observedQuery)) {
+      this.fence("Muse native search identity changed"); return;
+    }
+    const query = observedQuery ?? previous?.query ?? null;
+    const completed = method === "item/completed";
+    if (previous?.completed || previous && !completed) {
+      if (previous.query === null) previous.query = query;
+      return;
+    }
+    searches.set(callId, {itemId, query, completed});
+    const identity = {sessionId:this.sessionId, turnId:submission.turnId!, callId, query};
+    if (!completed) return {...identity, phase:"started"};
+    const status = item.status === "completed" || item.status === "failed" || item.status === "cancelled" ? item.status : "unknown";
+    return {...identity, phase:"completed", status, sources:searchSources(item, query)};
+  }
+
+  #flushPreIdentity(submission: Submission): void {
+    const held = submission.preIdentity;
+    submission.preIdentity = undefined;
+    for (const frame of held ?? []) {
+      if (this.#closing || this.#reason) break;
+      this.#apply(frame);
+    }
+  }
+
   #decide(request: MuseApproval): { choiceId: string } {
     let args: unknown;
     try { args = JSON.parse(request.rawArgs); } catch { args = undefined; }
-    const scoped = !this.#reason && !this.#dead && this.#busy &&
+    const scoped = !this.#stage && !this.#reason && !this.#dead && !this.#closing && this.#busy &&
       request.sessionId === this.sessionId && request.turnId === this.#submission?.turnId &&
       typeof request.toolCallId === "string" && request.toolCallId.length > 0 &&
       typeof request.approvalId === "string" && request.approvalId.length > 0 &&
@@ -548,34 +740,77 @@ export class MuseHost {
     if (this.#closing || this.#dead || this.#reason) throw new Error(this.#reason ?? "Muse host closed");
   }
 
-  async submitInput(text: string | TurnInputPart[], effort = this.#options.reasoningEffort ?? "none" as ReturnType<typeof museEffort>): Promise<{ turnId: string; commandId: string }> {
-    if (this.#options.catalogueEfforts && !this.#options.catalogueEfforts.includes(effort))
-      throw new Error(`Muse effort ${effort} absent from official model/list for ${this.#options.model}; no model request submitted`);
+  /** Measure against this native session and negotiated tier before any turn. */
+  measureTurn(requestedEffort?:string) {
+    const {tier:reasoningEffort} = resolveMuseEffort(requestedEffort,this.#options.catalogueEfforts,this.#options.model);
+    const sessionId=this.sessionId, commandId=this.connection.mintCommandId();
+    return (input:string|TurnInputPart[])=>turnStartFrameBytes({sessionId,input:inputParts(input),reasoningEffort,commandId});
+  }
+
+  async submitStage(input:TurnInputPart[], effort?:string, started?:()=>void):Promise<StagedTerminal> {
+    if (this.#options.nativeSearch) throw new Error("Muse staged replay requires native search to be off; no stage was submitted.");
+    if (this.#stage) throw new Error("Muse replay stage already pending");
+    let complete!:(event:StagedTerminal)=>void,reject!:(error:Error)=>void;
+    const terminal=new Promise<StagedTerminal>((yes,no)=>{complete=yes;reject=no;});
+    this.#stage={complete,reject};
+    const signal=this.#options.signal;
+    const aborted=()=>reject(new Error("Request aborted"));
+    signal?.addEventListener("abort",aborted,{once:true});
+    if (signal?.aborted) aborted();
+    try {
+      const [ack,event]=await Promise.all([Promise.resolve().then(()=>{
+        signal?.throwIfAborted();
+        return this.submitInput(input,effort).then(ack => { started?.(); return ack; });
+      }),terminal]);
+      if (ack.turnId!==event.turnId) throw new Error("Muse staged replay terminal has foreign identity");
+      return event;
+    } finally {
+      signal?.removeEventListener("abort",aborted);
+      this.#stage=undefined;
+    }
+  }
+
+  async submitInput(text: string | TurnInputPart[], requestedEffort?: string): Promise<{ turnId: string; commandId: string }> {
+    const {tier:effort, resolution:effortResolution} = resolveMuseEffort(requestedEffort, this.#options.catalogueEfforts, this.#options.model);
     this.#assertLive();
     if (!this.#session) throw new Error("Muse session not open");
     if (!this.#emptyPending()) this.#assertLive();
     if (this.#busy) throw new Error("Muse predecessor has no turn/completed terminal");
+    this.#submission = undefined;
+    this.#retrySafe = true;
+    const commandId = this.connection.mintCommandId();
+    // Refuse an unreadable frame before anything is written or billed. A long
+    // session that exceeds the client's inbound limit must name the size, the
+    // limit and the next step instead of dying mid-work with "no replay".
+    const input = inputParts(text);
+    const frameBytes = turnStartFrameBytes({ sessionId: this.sessionId, commandId, input, reasoningEffort: effort });
+    if (frameBytes > MUSE_INBOUND_FRAME_LIMIT_BYTES) throw new MuseFrameOverInboundLimit(frameBytes);
     await this.#options.verifyLogin?.();
+    this.#assertLive();
     if (!this.#options.echo) {
-      const result = await this.connection.request("usage/read", {}).catch(error=>{if(!this.#refusal(error) && quotaDenial(error))this.fence("Muse quota refused; no replay");throw error;});
+      const result = await this.connection.request("usage/read", {}).catch(error=>{if(!this.#refusal(error) && quotaDenial(error))this.fence(quotaFenceMessage(error));throw error;});
       const usage = result.usage as any;
-      publishQuota(usage); this.ledger.quota(usage);
-      // Muse reports percentages; 100% is the provider's exhausted plan boundary.
-      if (quotaExhausted(usage)) {
-        this.fence("Muse plan usage limit reached; no turn submitted");
-        throw new Error("Muse plan usage limit reached; no turn submitted");
+      if (hasQuotaData(usage)) {
+        publishQuota(usage); this.ledger.quota(usage);
+        // Muse reports percentages; 100% is the provider's exhausted plan boundary.
+        if (quotaExhausted(usage)) {
+          const resetIso = quotaExhaustedResetIso(usage);
+          const msg = `Muse plan usage limit reached (quota exceeded); no turn submitted${resetIso ? ` (resets at ${resetIso})` : ""}`;
+          this.fence(msg);
+          throw new Error(msg);
+        }
       }
     }
-    const commandId = this.connection.mintCommandId();
+    this.#assertLive(); // Abort may have settled the preflight while it was awaiting I/O.
     const submission: Submission = { commandId, turnId: undefined, terminal: false, started: false };
     this.#submission = submission;
-    this.#committedCalls.clear(); this.#committedBatches.clear(); this.#lastRetryHttpStatus=undefined;
+    this.#committedCalls.clear(); this.#committedBatches.clear(); this.#lastRetryHttpStatus=undefined; this.#lastRetryCause=undefined;
     this.#retrySafe = false;
     this.#busy = true;
     try {
       // Never Session.sendUserTurn: the SDK replay producer remains empty.
       const ack = await this.connection.command("turn/start", { sessionId: this.sessionId,
-        input: typeof text === "string" ? [{ type: "text", text }] : text, reasoningEffort: effort }, { commandId, maxAttempts: 1 });
+        input, reasoningEffort: effort }, { commandId, maxAttempts: 1 });
       this.#assertLive();
       if (ack.commandId !== commandId || ack.status !== "accepted" || (ack.disposition !== "started" && ack.disposition !== "queued") ||
         typeof ack.turnId !== "string" || (submission.turnId !== undefined && submission.turnId !== ack.turnId)) {
@@ -584,12 +819,15 @@ export class MuseHost {
       submission.turnId = ack.turnId;
       this.ledger.record("turn_admitted", {
         commandId, turnId: ack.turnId, disposition: ack.disposition,
-        requestedEffort: effort, acceptance: "native:MSP-turn/start;not-physical-provider-effort",
+        requestedEffort: requestedEffort ?? null, submittedEffort: effort, effortResolution,
+        acceptance: "native:MSP-turn/start;not-physical-provider-effort",
         images: (typeof text === "string" ? [] : text.filter(p => p.type === "image")).map(p => {
           const bytes = Buffer.from(p.base64Data!, "base64");
           return { mediaType: p.mediaType, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
         }),
       });
+      this.#flushPreIdentity(submission);
+      this.#assertLive();
       // MSP TurnStartDisposition: queue is the default when the host is busy.
       // Even just after turn/completed, dispatch may still be releasing its slot.
       // Admission is NOT execution: wait for this command's own turn/started.
@@ -599,13 +837,33 @@ export class MuseHost {
       this.#assertLive();
       return { turnId: ack.turnId, commandId };
     } catch (error) {
+      submission.preIdentity = undefined;
+      // A correlated SDK error response to turn/start, not usage/read, a
+      // notification, a local error, or a failed/unknown accepted turn. Capture
+      // it before refusal handling fences the host and discards held events.
+      const refused = error instanceof MspError && !submission.started && submission.turnId === undefined;
+      if (refused) {
+        const status = error.data.httpStatus;
+        this.#emit({ kind: "admission-refused", ...(typeof status === "number" && Number.isInteger(status) ? {httpStatus:status} : {}) });
+      }
+      // The client's own inputTooLarge refusal is the frame limit measured above;
+      // nothing was admitted, so report both numbers and leave the host usable.
+      const limit = inputTooLarge(error);
+      if (limit !== undefined) {
+        this.#busy = false;
+        throw new MuseFrameOverInboundLimit(frameBytes, limit);
+      }
       this.#retrySafe = !policyDenial(error) && !quotaDenial(error) && !submission.started && submission.turnId===undefined && error instanceof MspError &&
         ((error.code===-32001 && error.kind==="overloaded") || (error.code===-32031 && error.kind==="backpressured"));
       this.#refusal(error);
       if (quotaDenial(error) && !policyDenial(error)) {
         this.ledger.record("quota_refusal", {phase:"turn_admission"});
-        this.fence("Muse quota refused; no replay");
-      } else this.fence(`${policyDenial(error) ? "Muse nonretryable provider refusal" : "Muse turn admission failed; no replay"}: ${error instanceof Error ? error.message : String(error)}`);
+        this.fence(quotaFenceMessage(error));
+      } else if (refused && !this.#retrySafe) {
+        // Pi recognizes retry/overflow hints in text. Do not pass an arbitrary
+        // refusal message through that classifier as authority to resubmit.
+        this.fence("Muse turn/start refused; no replay");
+      } else if (!this.#closing || error instanceof MspError) this.fence(`Muse turn admission failed; no replay: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
@@ -620,13 +878,7 @@ export class MuseHost {
       const ack=await this.connection.command("turn/steer",{sessionId:this.sessionId,expectedTurnId:turnId,input:typeof text === "string" ? [{type:"text",text}] : text},{commandId,maxAttempts:1});
       if(ack.status!=="accepted"||ack.commandId!==commandId||ack.turnId!==turnId)throw new Error("Muse steering unconfirmed; no resubmit");
       this.#assertLive();
-    }catch(error){this.#refusal(error);this.fence("Muse steering failed; no replay");throw error;}
-  }
-
-  async cancelTurn(): Promise<void> {
-    const turnId = this.#submission?.turnId;
-    if (!turnId || !this.#busy || this.#dead || this.#submission?.terminal) return;
-    await this.connection.command("turn/cancel", { sessionId: this.sessionId, turnId }, { maxAttempts: 1 });
+    }catch(error){if(!this.#refusal(error) && !this.#closing)this.fence("Muse steering failed; no replay");throw error;}
   }
 
   fence(reason: string): void {
@@ -635,71 +887,84 @@ export class MuseHost {
     this.ledger.retire("fenced", reason.split(":")[0].slice(0, 120));
     this.#submission?.refuse?.(new Error(reason));
     this.#emit({ kind: "fenced", reason });
-    void this.cancelTurn().catch(() => undefined);
+    void this.close().catch(() => undefined);
   }
 
   hostExited(exit: ExitClassification | { kind: "transportEof" }): void {
     // Report BOTH exit and EOF; public Session.hostExited owns idempotence.
+    this.ledger.record("process_exit",{exitKind:exit.kind});
     if (exit.kind === "cleanShutdown" && this.#closing) return;
     const death = exit.kind === "cleanShutdown" ? { kind: "transportEof" as const } : exit;
     this.#dead = true;
-    this.ledger.record("process_exit",{exitKind:exit.kind});
     this.#session?.hostExited(death);
     this.fence(`Muse host died; ephemeral lineage discarded (${JSON.stringify(exit)})`);
   }
 
-  close(): Promise<void> {
+  close(reason = "close"): Promise<void> {
     if (!this.#closePromise) {
       this.#closing = true;
-      this.ledger.retire("close");
-      this.#submission?.refuse?.(new Error("Muse closed while awaiting queued admission; no replay"));
-      this.#closePromise = Promise.resolve().then(async () => {
-        try { if (!this.#options.echo && !this.#dead && !this.#reason) await this.connection.request("usage/read", {}); }
-        finally { await this.closeProcess(); }
-      });
+      this.#stage?.reject(new Error("Muse closed during staged replay; no replay"));
+      this.ledger.retire(reason);
+      const submission = this.#submission;
+      submission?.refuse?.(new Error("Muse closed while awaiting queued admission; no replay"));
+      if (submission && !submission.terminal && !this.#retrySafe) {
+        this.ledger.record("turn_retired", { commandId: submission.commandId, turnId: submission.turnId ?? null,
+          admission: submission.turnId ? "identified" : "unknown" });
+      }
+      if (submission?.turnId && !submission.terminal && !this.#dead) {
+        const { commandId, turnId } = submission;
+        this.ledger.record("turn_cancel_requested", { commandId, turnId });
+        // SDK close drains already-enqueued writes before EOF on a healthy
+        // peer, and owns escalation/reaping. Never await a cancel response.
+        void this.connection.command("turn/cancel", { sessionId: this.sessionId, turnId }, { maxAttempts: 1 })
+          .catch(error=>{this.#refusal(error);});
+      }
+      this.#closePromise = Promise.resolve().then(async () => { await this.closeProcess(); });
     }
     return this.#closePromise;
   }
 }
 
-export async function discoverMuseCatalog() {
+export async function discoverMuseCatalog(signal?: AbortSignal) {
   const launch=museLaunchOptions({cwd:process.cwd(),tools:["read"],promptMode:"none"});
-  await qualifyMuseVersion(launch.command,launch.env??{});
-  const handshake = spawnMspConnection(launch);
+  const root = await createVendorRoot("pi-muse-discovery-");
+  const env = vendorProcessEnv(launch.env, root, "inherited");
+  let handshake: ReturnType<typeof spawnMspConnection> | undefined;
+  const abort = () => { void handshake?.close().catch(() => undefined); };
   try {
+    await qualifyMuseVersion(launch.command, env, signal);
+    await seedVendorCatalogue(launch.env, root);
+    signal?.throwIfAborted();
+    handshake = spawnMspConnection({...launch, env});
+    signal?.addEventListener("abort", abort, {once:true});
     const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.2.0" },
       capabilities: { requestedCapabilities: ["sessionMcp"], userInputDialogs: false } });
     const catalog = await spawned.connection.request("model/list", {});
+    signal?.throwIfAborted();
     return catalog as typeof catalog & {models:any[]};
   } catch (error) {
-    if (policyDenial(error)) policyLatch="Muse nonretryable provider refusal latched; account-owner review required";
+    if (handshake && policyDenial(error)) policyLatch="Muse nonretryable provider refusal latched; account-owner review required";
     throw error;
-  } finally { await handshake.close(); }
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    try { await handshake?.close(); }
+    finally { await rm(root, { recursive:true, force:true }); }
+  }
 }
 
 export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> {
   let launch = museLaunchOptions(options); // preflight BEFORE filesystem/process work
   options = {...options, binary:launch.command, clientBuild:clientBuildLabel(launch.command)};
   options.signal?.throwIfAborted();
-  await qualifyMuseVersion(launch.command, launch.env??{}, options.signal);
-  options={...options,clientBuild:clientBuildLabel(launch.command)};
-  if (options.qualificationProbe && !process.env.PI_MUSE_TETHER_QUALIFICATION_REAL_CONFIG) throw new Error("Qualification probe requires the isolated opt-in worker");
-  let batchReason:string|undefined;
-  if (options.toolBatches && !options.echo && !options.qualificationProbe) {
-    let eligible;
-    try { eligible=batchEligibility(launch.command); } catch { eligible={qualified:false,reason:"Qualification schema/identity check unavailable"}; }
-    if (!eligible.qualified) { batchReason=eligible.reason; options={...options,toolBatches:false}; }
-  }
-  if (!options.toolBatches && !options.echo) launch = {...launch, args:[...(launch.args ?? []), "--config", "run.parallel_tool_calls=false"]};
-  // Muse canonicalizes workspaceRoot before trust lookup (e.g. macOS /var).
-  // One canonical root owns settings, trust, auth link and raw/coding workspace.
-  const home = await realpath(await mkdtemp(join(tmpdir(), "pi-muse-host-")));
-  const env = options.echo ? { ...launch.env,
-    HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"),
-    XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state") } : {
-    ...launch.env, ...(options.privatePrompt ? {XDG_CONFIG_HOME:join(home,"config")} : {})};
+  const catalogueBefore = options.echo ? undefined : await catalogueIdentity(launch.command);
+  // One canonical root owns vendor materialization, settings, trust, login
+  // link and the raw/coding workspace. Inventory and serve see the same roots.
+  const home = await createVendorRoot("pi-muse-host-");
+  const env = vendorProcessEnv(launch.env, home, options.echo ? "echo" : options.privatePrompt ? "private" : "inherited");
   let verifyLogin:(()=>Promise<unknown>)|undefined, cleaned=false;
   let host: MuseHost | undefined;
+  let handshake: ReturnType<typeof spawnMspConnection> | undefined;
+  const abortOpen = () => { void (host ? host.close("abort") : handshake?.close())?.catch(() => undefined); };
   const cleanup=async()=>{
     if(cleaned)return;cleaned=true;
     if(verifyLogin)await verifyLogin();
@@ -708,8 +973,18 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
     await rm(home,{recursive:true,force:true});
   };
   try {
+    const versions = await qualifyMuseVersion(launch.command, env, options.signal);
+    options={...options,clientBuild:clientBuildLabel(launch.command)};
+    if (options.qualificationProbe && !process.env.PI_MUSE_TETHER_QUALIFICATION_REAL_CONFIG) throw new Error("Qualification probe requires the isolated opt-in worker");
+    let batchReason:string|undefined;
+    if (options.toolBatches && !options.echo && !options.qualificationProbe) {
+      let eligible;
+      try { eligible=batchEligibility(launch.command); } catch { eligible={qualified:false,reason:"Qualification schema/identity check unavailable"}; }
+      if (!eligible.qualified) { batchReason=eligible.reason; options={...options,toolBatches:false}; }
+    }
+    if (!options.toolBatches && !options.echo) launch = {...launch, args:[...(launch.args ?? []), "--config", "run.parallel_tool_calls=false"]};
     if (options.privatePrompt) {
-      await writePromptSettings(home, options.privatePrompt.systemPrompt, options.tools, options.privatePrompt.skillsOff, options.promptMode === "append" ? "append" : "replace");
+      await writePromptSettings(home, options.privatePrompt.systemPrompt, options.tools, options.privatePrompt.skillsOff, options.promptMode === "append" ? "append" : "replace", options.nativeSearch);
       options = {...options, privateWorkspace: privateWorkspace(home)};
       if(!options.echo){
         const verify=await linkHostLogin(home,launch.env?.XDG_CONFIG_HOME??join(homedir(),".config"));
@@ -720,34 +995,43 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
           return metadata;
         };
       }
-      const skills=options.privatePrompt.skillsOff??await discoverSkillsOff(launch.command,options.cwd,env);
+      const skills=options.privatePrompt.skillsOff??await discoverSkillsOff(launch.command,options.cwd,env,options.signal);
       // Inventory is finished before the model host starts. Only this generation
       // can see this settings path; auxiliary summaries stage their own files.
-      await writeFile(join(home,"config/muse/settings.json"),JSON.stringify(promptSettings(options.privatePrompt.systemPrompt,options.tools,skills,options.promptMode === "append" ? "append" : "replace")),{mode:0o600});
+      const pi = privatePiMcp(options);
+      const settings = promptSettings(options.privatePrompt.systemPrompt,options.tools,skills,options.promptMode === "append" ? "append" : "replace", options.nativeSearch);
+      await writeFile(join(home,"config/muse/settings.json"),JSON.stringify({
+        ...settings, ...(pi ? {mcp_servers:{pi}} : {}),
+      }),{mode:0o600});
     }
-  } catch (error) { await cleanup(); throw error; }
-  const handshake = spawnMspConnection({ ...launch, env });
-  const abortOpen = () => { void handshake.close().catch(() => undefined); };
-  options.signal?.addEventListener("abort", abortOpen, { once: true });
-  if (options.signal?.aborted) abortOpen();
-  // Capture frames from process birth, not just session/start. Never await a receipt.
-  const held: MuseFrame[] = [];
-  handshake.onNotification((frame) => held.push(frame as MuseFrame));
-  handshake.onServerRequest(async (request) => {
-    if (request.method !== "approval/request" && request.method !== "userInput/request") {
-      throw new MspError({ code: -32601, message: `method not found: ${request.method}`,
-        data: { kind: "methodNotFound", retryable: false } });
-    }
-    held.push({ method: request.method === "userInput/request" ? "userInput/requested" : request.method, params: request.params });
-    return {};
-  });
-  try {
+    options.signal?.throwIfAborted();
+    handshake = spawnMspConnection({ ...launch, env });
+    options.signal?.addEventListener("abort", abortOpen, { once: true });
+    if (options.signal?.aborted) abortOpen();
+    // Capture frames from process birth, not just session/start. Never await a receipt.
+    const held: MuseFrame[] = [];
+    handshake.onNotification((frame) => held.push(frame as MuseFrame));
+    handshake.onServerRequest(async (request) => {
+      if (request.method !== "approval/request" && request.method !== "userInput/request") {
+        throw new MspError({ code: -32601, message: `method not found: ${request.method}`,
+          data: { kind: "methodNotFound", retryable: false } });
+      }
+      held.push({ method: request.method === "userInput/request" ? "userInput/requested" : request.method, params: request.params });
+      return {};
+    });
     const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_tether", version: "0.2.0" },
       capabilities: { requestedCapabilities: ["sessionMcp",...(options.toolBatches?["rawLog"]:[])], userInputDialogs: false, ...((options.privatePrompt||options.toolBatches||Object.keys(options.mcpServers??{}).length)?{experimentalApi:true}:{}) } });
+    if (options.nativeSearch && spawned.initializeResult.experimentalApi !== true)
+      throw new Error("Muse native search requires experimental MSP search projection; no prompt was sent.");
     if (options.privatePrompt && options.promptMode === "replace" && spawned.initializeResult.experimentalApi === false) {
+      if (options.purpose === "raw") throw new MuseFeatureUnavailable(options.clientBuild ?? "unknown build","privatePrompt","tool-free request requires qualified prompt replacement; no append fallback");
       await spawned.close(); await cleanup();
-      console.warn(featureNotice(options.clientBuild ?? "unknown build","privatePrompt","experimental private replacement not negotiated","Pi prompt appended through supported run.developer_prompt, not replacing Muse instructions"));
-      return openMuseHost({...options,promptMode:"append"});
+      const build = options.clientBuild ?? "unknown build", reason = "experimental private replacement not negotiated",
+        fallback = "Pi prompt appended through supported run.developer_prompt, not replacing Muse instructions";
+      featureNotice(build,"privatePrompt",reason,fallback);
+      const appendHost = await openMuseHost({...options,promptMode:"append"});
+      appendHost.ledger.record("route_degraded",{build,feature:"privatePrompt",reason,fallback});
+      return appendHost;
     }
     if (options.privatePrompt && options.promptMode === "replace") featureActive(options.clientBuild ?? "unknown build","privatePrompt");
     if (!spawned.initializeResult.grantedCapabilities.includes("sessionMcp")) throw new MuseFeatureUnavailable(options.clientBuild ?? "unknown build","sessionMcp","initialize did not grant session MCP");
@@ -757,17 +1041,17 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
     }
     if (!options.echo) {
       const catalog = await spawned.connection.request("model/list", {});
-      const selected = (catalog.models as any[])?.find((m) => m.modelId === options.model);
-      if (catalog.source !== "providerCatalog" || !selected)
-        throw new Error("Selected model absent from official Muse model/list providerCatalog");
-      const effort = options.reasoningEffort ?? "none";
-      if (!Array.isArray(selected.variants) || !selected.variants.includes(effort))
-        throw new Error(`Muse effort ${effort} absent from official model/list for ${options.model}; no model request submitted`);
+      await refreshCatalogueFromHost(catalogueBefore,launch.command,catalog);
+      const selected = museCatalogAssessment(catalog).valid.find((m) => m.modelId === options.model);
+      if (!selected) throw new Error("Selected usable model absent from official Muse model/list providerCatalog");
       options = {...options, catalogueEfforts: [...selected.variants]};
     }
     host = new MuseHost(spawned.connection, spawned.initializeResult, {...options,verifyLogin}, async () => {
       try { await spawned.close(); } finally { await cleanup(); }
     });
+    host.ledger.record("client_route",{build:options.clientBuild,...versions,
+      versionPolicy:isNewerThanTestedCli(versions.client) ? "continuing, not yet qualified" : "within tested version range",
+      promptMode:options.promptMode, toolMode:host.batches ? "parallel" : "sequential"});
     if (batchReason) host.degradeBatches(batchReason);
     else if (host.batches) featureActive(options.clientBuild ?? "unknown build","rawLog");
     void spawned.child.exit.then((exit) => host!.hostExited(exit));
@@ -775,10 +1059,10 @@ export async function openMuseHost(options: MuseHostOptions): Promise<MuseHost> 
     held.length = 0;
     return await host.open();
   } catch (error) {
-    if(policyDenial(error))policyLatch="Muse nonretryable provider refusal latched; account-owner review required";
-    await (host ? host.close() : handshake.close()).catch(() => undefined);
+    if(handshake && policyDenial(error))policyLatch="Muse nonretryable provider refusal latched; account-owner review required";
+    await (host ? host.close() : handshake?.close())?.catch(() => undefined);
     await cleanup();
-    if (serverRequiresUpgrade(error)) throw new MuseUpgradeRequired(options.clientBuild ?? clientBuildLabel(launch.command));
+    if (handshake && serverRequiresUpgrade(error)) throw new MuseUpgradeRequired(options.clientBuild ?? clientBuildLabel(launch.command));
     throw error;
   } finally { options.signal?.removeEventListener("abort", abortOpen); }
 }

@@ -1,3 +1,4 @@
+import {fixtureMeasureTurn} from "./fixture-measure.js";
 import {appendFile,readFile} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
@@ -12,14 +13,14 @@ export default async function(pi:any){
   if(options.purpose==='raw')return openFixtureHost(options);
   const id=++coding;await record({kind:'open-coding',id,systemPrompt:options.privatePrompt?.systemPrompt});let child:any;let receipts=0;let fenced=false;
   const emit=options.onEvent;
-  const host:any={batches:true,retrySafe:false,fence(reason:string){if(fenced)return;fenced=true;emit({kind:'fenced',reason});},async cancelTurn(){},async close(){
+  const host:any={batches:true,retrySafe:false,measureTurn:fixtureMeasureTurn,fence(reason:string){if(fenced)return;fenced=true;emit({kind:'fenced',reason});},async cancelTurn(){},async close(){
    if(child&&child.exitCode===null){const exit=new Promise(r=>child.once('exit',r));child.stdin.end();await exit;}
    await record({kind:'close-coding',id});
   },async submitInput(text:any){
    await record({kind:'submit',id,text});
-   if(process.env.MIDTURN_MODE==='workload'){emit({kind:'frame',frame:{method:'item/delta',params:{field:'text',delta:'WORKLOAD_COMPLETE'}}});emit({kind:'terminal',status:'completed'});return;}
+   if(process.env.MIDTURN_MODE==='workload'){emit({kind:'frame',frame:{method:'item/completed',params:{item:{kind:'agentMessage',itemId:'visible-'+id,text:'WORKLOAD_COMPLETE'}}}});emit({kind:'terminal',status:'completed'});return;}
    const continuation=String(text).includes('PI COMMITTED COMPACTION CONTINUATION');
-   if(continuation){emit({kind:'frame',frame:{method:'item/delta',params:{field:'text',delta:'CONTINUATION_COMPLETE'}}});emit({kind:'terminal',status:'completed'});return;}
+   if(continuation){emit({kind:'frame',frame:{method:'item/completed',params:{item:{kind:'agentMessage',itemId:'visible-'+id,text:'CONTINUATION_COMPLETE'}}}});emit({kind:'terminal',status:'completed'});return;}
    const calls=['a','b'].map(callId=>({callId,name:'mcp__pi__batch_lookup',args:{key:callId}}));
    for(const c of calls)if(!options.validateApproval({toolName:c.name,toolCallId:c.callId,rawArgs:JSON.stringify(c.args),approvalId:c.callId,currentRequirementId:c.callId}))throw new Error('fixture approval denied');
    emit({kind:'frame',frame:{method:'session/tokenUsage',params:{sourceRange:{last:{id:'batch-'+id}},usage:{inputTokens:120,outputTokens:7,cacheReadTokens:0,cacheWriteTokens:0},totalTokens:127}}});

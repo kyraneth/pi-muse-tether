@@ -10,7 +10,8 @@ const imageMagic: Record<string, (b: Buffer) => boolean> = {
   "image/gif": b => ["GIF87a", "GIF89a"].includes(b.subarray(0,6).toString("ascii")),
   "image/webp": b => b.subarray(0,4).toString("ascii") === "RIFF" && b.subarray(8,12).toString("ascii") === "WEBP",
 };
-function imageDeclarations(sent: BridgeResult): UnverifiableImage[] {
+type ImageDimensions = { width: number; height: number };
+function imageDeclarations(sent: BridgeResult, dimensions?: Map<number, ImageDimensions>): UnverifiableImage[] {
   const images: UnverifiableImage[] = [];
   for (const [partIndex, part] of sent.content.entries()) {
     if (part.type === "text" && typeof part.text === "string") continue;
@@ -19,6 +20,8 @@ function imageDeclarations(sent: BridgeResult): UnverifiableImage[] {
     const bytes = Buffer.from(part.data, "base64");
     if (bytes.toString("base64") !== part.data || !imageMagic[part.mimeType](bytes))
       throw new Error("Muse tool result cannot verify MCP parts: malformed image encoding or MIME signature");
+    const size = dimensions && parseImageDimensions(bytes, part.mimeType);
+    if (size) dimensions!.set(partIndex, size);
     images.push({ partIndex, sha256: createHash("sha256").update(bytes).digest("hex"), byteLen: bytes.length, mimeType: part.mimeType,
       ...(sent.isError === true ? {modelVisibility: "omitted-error-result" as const} : {}) });
   }
@@ -26,6 +29,71 @@ function imageDeclarations(sent: BridgeResult): UnverifiableImage[] {
 }
 export function assertToolResultVerifiable(sent: BridgeResult): void {
   imageDeclarations(sent);
+}
+
+// Header facts only; signatures have already been checked. Replace this
+// local reader with shared result-parts image identities when available.
+function parseImageDimensions(bytes: Buffer, mimeType: string): ImageDimensions | undefined {
+  let width = 0, height = 0;
+  if (mimeType === "image/png" && bytes.length >= 24 && bytes.readUInt32BE(8) === 13 &&
+    bytes.toString("latin1", 12, 16) === "IHDR") {
+    width = bytes.readUInt32BE(16);
+    height = bytes.readUInt32BE(20);
+  } else if (mimeType === "image/gif" && bytes.length >= 10) {
+    width = bytes.readUInt16LE(6);
+    height = bytes.readUInt16LE(8);
+  } else if (mimeType === "image/webp" && bytes.length >= 20) {
+    const riffEnd = bytes.readUInt32LE(4) + 8;
+    const chunkLength = bytes.readUInt32LE(16);
+    if (riffEnd > bytes.length || 20 + chunkLength + (chunkLength % 2) > riffEnd) return;
+    const kind = bytes.toString("latin1", 12, 16);
+    if (kind === "VP8X" && chunkLength >= 10) {
+      width = 1 + bytes.readUIntLE(24, 3);
+      height = 1 + bytes.readUIntLE(27, 3);
+    } else if (kind === "VP8L" && chunkLength >= 5 && bytes[20] === 0x2f) {
+      const bits = bytes.readUInt32LE(21);
+      width = 1 + (bits & 0x3fff);
+      height = 1 + ((bits >>> 14) & 0x3fff);
+    } else if (kind === "VP8 " && chunkLength >= 10 && (bytes[20] & 1) === 0 &&
+      bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+      width = bytes.readUInt16LE(26) & 0x3fff;
+      height = bytes.readUInt16LE(28) & 0x3fff;
+    }
+  } else if (mimeType === "image/jpeg") {
+    let i = 2;
+    while (i < bytes.length && bytes[i++] === 0xff) {
+      while (bytes[i] === 0xff) i++;
+      if (i >= bytes.length) break;
+      const marker = bytes[i++];
+      if (marker === 0xd9 || marker === 0xda || marker === 0x00) break;
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+      if (i + 2 > bytes.length) break;
+      const length = bytes.readUInt16BE(i);
+      if (length < 2 || i + length > bytes.length) break;
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        if (length >= 8) {
+          height = bytes.readUInt16BE(i + 3);
+          width = bytes.readUInt16BE(i + 5);
+        }
+        break;
+      }
+      i += length;
+    }
+  }
+  if (width && height) return { width, height };
+}
+
+const imagePlaceholder = /^\[MCP image content: media_type=(image\/(?:png|jpeg|webp|gif)), bytes=([1-9]\d*)(?:, dimensions=([1-9]\d*x[1-9]\d*)(?:, source_dimensions=([1-9]\d*x[1-9]\d*))?)?\]$/;
+function matchesMuseImagePlaceholder(line: string, image: UnverifiableImage, size?: ImageDimensions): boolean {
+  const match = imagePlaceholder.exec(line);
+  if (!match || match[0] !== line) return false;
+  const [, mime, bytes, dimensions, sourceDimensions] = match;
+  if (!dimensions) return mime === image.mimeType && bytes === String(image.byteLen);
+  if (!size) return false;
+  const source = `${size.width}x${size.height}`;
+  // Muse can re-encode an image with or without changing its dimensions.
+  // The normalized MIME and size are descriptive, not evidence of source bytes.
+  return sourceDimensions ? sourceDimensions === source && dimensions !== source : dimensions === source;
 }
 /** visibleBytes includes any displayed ellipsis; candidate offsets address the original projection. */
 export type TruncatedView = { visibleBytes: number; projectionBytes: number; omittedOffsetBytes: number; omittedByteLen: number; sha256: string; ellipsisIdentity: "not-present" | "generated" | "ambiguous"; candidateOmittedOffsetsBytes: number[]; sources: {partIndex:number;partOffsetBytes:number;byteLen:number}[] };
@@ -36,7 +104,8 @@ function viewPrefixes(visible: string, full: string): string[] {
   return candidates.filter(prefix => !(prefix.length && /[\uD800-\uDBFF]/.test(prefix.at(-1)!)) && full.startsWith(prefix));
 }
 export function toolResultReceipt(item: any, sent: BridgeResult, stored?: string, onRedactions?: (spans: VendorRedaction[]) => void, onImages?: (images: UnverifiableImage[]) => void, onTruncatedView?: (view: TruncatedView) => void): BridgeResult {
-  const images = imageDeclarations(sent);
+  const dimensions = new Map<number, ImageDimensions>();
+  const images = imageDeclarations(sent, sent.isError === true ? undefined : dimensions);
   if (images.length && !onImages) throw new Error("Muse image receipt requires declared-unverifiable reporting");
   if (typeof item.visibleOutput !== "string") throw new Error("Muse tool result missing visibleOutput");
   if (item.truncated !== undefined && typeof item.truncated !== "boolean")
@@ -60,25 +129,29 @@ export function toolResultReceipt(item: any, sent: BridgeResult, stored?: string
   }
   // Construct the ordered native projection from Pi parts. Never search/remove
   // placeholder-shaped strings: literal tool text and leading LF remain bytes.
-  let expected = "";
+  let expected = "", expectedLine = 0;
+  const actualLines = images.length && sent.isError !== true ? actual.split("\n") : [];
   const protectedImages: { start: number; end: number }[] = [];
   const textSources: {partIndex:number; start:number; end:number}[] = [];
   for (const [index, part] of sent.content.entries()) {
     if (part.type === "text") {
       // Native string folding ignores leading empty chunks but preserves a
       // separator before an empty chunk after nonempty output (captured live).
-      if (expected) expected += "\n";
+      if (expected) { expected += "\n"; expectedLine++; }
       const start = Buffer.byteLength(expected);
       expected += part.text;
+      if (actualLines.length) expectedLine += part.text.split("\n").length - 1;
       textSources.push({partIndex:index,start,end:Buffer.byteLength(expected)});
     } else {
       // The official client's failed MCP path projects text only. Images were
       // delivered to MCP, NOT exposed to the model; declare that known loss.
       if (sent.isError === true) continue;
       const image = images.find(image => image.partIndex === index)!;
-      if (expected) expected += "\n";
+      if (expected) { expected += "\n"; expectedLine++; }
       const start = expected.length;
-      expected += `[MCP image content: media_type=${image.mimeType}, bytes=${image.byteLen}]`;
+      const line = actualLines[expectedLine];
+      expected += line !== undefined && matchesMuseImagePlaceholder(line, image, dimensions.get(index)) ? line :
+        `[MCP image content: media_type=${image.mimeType}, bytes=${image.byteLen}]`;
       protectedImages.push({ start, end: expected.length });
     }
   }

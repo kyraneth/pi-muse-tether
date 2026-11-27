@@ -1,10 +1,11 @@
+import {fixtureMeasureTurn} from "./fixture-measure.js";
 import { afterEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ opens: 0, closes: 0, inputs: [] as string[] }));
 vi.mock("../src/host.js", () => ({ openMuseHost: async (opts: any) => {
   state.opens++;
-  return { submitInput: async (text: string) => {
+  return { measureTurn:fixtureMeasureTurn, submitInput: async (text: string) => {
     state.inputs.push(text);
-    opts.onEvent({kind:"frame",frame:{method:"item/delta",params:{field:"text",delta:`reply:${text}`}}});
+    opts.onEvent({kind:"frame",frame:{method:"item/completed",params:{item:{kind:"agentMessage",itemId:`text-${state.inputs.length}`,text:`reply:${text}`}}}});
     opts.onEvent({kind:"terminal",status:"completed",turnId:`turn-${state.inputs.length}`});
   }, close: async () => {state.closes++;}, fence() {} };
 }}));
@@ -41,7 +42,7 @@ it.each(["signature","prefix"])("retires on %s mismatch and imports the current 
 });
 it('does not confuse a repeated extension note with the identity of a failed real prompt',async()=>{
  let attempts=0;
- const p=createMuseProvider({openHost:async(opts:any)=>({retrySafe:false,fence(){},async close(){},async submitInput(){opts.onEvent({kind:'terminal',status:++attempts===1?'failed':'completed'});}} as any)});
+ const p=createMuseProvider({openHost:async(opts:any)=>({retrySafe:false,measureTurn:fixtureMeasureTurn,fence(){},async close(){},async submitInput(){opts.onEvent({kind:'terminal',status:++attempts===1?'failed':'completed'});}} as any)});
  let nativeUser=user('first');
  p.setSessionManager({getSessionId:()=> 'fixed-note',getSessionFile:()=> 'fixture.jsonl',getBranch:()=>[{type:'message',message:nativeUser}]});
  try {

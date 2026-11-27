@@ -8,7 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Only these roots are public. New directories never enter the export implicitly.
 const allowlist = ['.gitignore', 'LICENSE', 'README.md', 'CHANGELOG.md', 'package.json', 'index.ts', 'src', 'tests', 'vitest.config.ts',
   'assets/flow-dark.svg', 'assets/flow-light.svg', 'assets/flow.mmd', 'assets/batch-boundary-schemas.json', 'assets/qualification-seeds.json', 'docs/DETAILS.md', 'docs/CLIENT-LIFECYCLE.md', 'docs/CLIENT-QUALIFICATION.md',
-  'scripts/export-manifest', 'scripts/check-public-tree.mjs', 'scripts/install-core-main.mjs',
+  'scripts/export-manifest', 'scripts/check-public-tree.mjs', 'scripts/install-core-main.mjs', 'scripts/smoke-installed.sh',
   'scripts/live-safety.mjs', 'scripts/live-verification.mts', 'scripts/verification-support.ts',
   'scripts/test-guard.mjs', 'scripts/test-isolation.mjs', 'scripts/prove-sequential.mts'];
 const files = [];

@@ -42,6 +42,21 @@ async function fixture() {
   }
   incoming.push(f);
  };
+ // Real Muse (retained recorded wire) answers a timed-out call with a
+ // tool_result_batch_committed carrying the timeout; the host ignores that
+ // event kind and the turn continues. Reuse the fixture frame bytes with
+ // that event kind instead of the simplified empty-commit frames, which are
+ // not the wire shape a surviving turn sees.
+ const emitConsumed=()=>{
+  const f=structuredClone(real.frames.nativeResult);
+  f.params.record.payload.run_id=turnId;
+  const ev=f.params.record.payload.event;
+  ev.kind="tool_result_batch_committed";
+  delete ev.message_id;delete ev.response_id;
+  ev.batch_id="fixture-timeout-batch";
+  ev.results=[{tool_call_id:real.frames.commit.params.record.payload.event.tool_calls[0].call_id,tool_call_index:0,text:"tool timed out",estimated_prompt_tokens:1}];
+  incoming.push(f);
+ };
  const provider=createMuseProvider({toolBatches:true,openHost:async options=>{
   const reply=(f:any,result:any)=>incoming.push({jsonrpc:"2.0",id:f.id,result});
   connection=new Connection({incoming,async write(chunk:string){
@@ -77,29 +92,30 @@ async function fixture() {
  const agent=new Agent({initialState:{model:{id:"echo",provider:"pi-muse-tether"} as any,tools:[{name:"bash",label:"Offline Pi bash fixture (never runs a shell)",description:"Synthetic fixture tool ownership",parameters:{type:"object",properties:{command:{type:"string"},timeout:{type:"number"}},required:["command"]},async execute(_id:string,args:any){state.runs.push(args);state.toolStarted.resolve();await state.toolRelease.promise;return {content:[{type:"text" as const,text:"local Pi result after root intervention"}],details:{}};}}]},streamFn:provider.streamViaMuse});
  agent.subscribe(e=>{if(e.type==="message_end")manager.appendMessage(e.message as any);});
  cleanup=async()=>{state.toolRelease.resolve();await provider.retireAll();await agent.waitForIdle();await rm(root,{recursive:true,force:true});};
- return {state,agent,provider,emit,get host(){return host;}};
+ return {state,agent,provider,emit,emitConsumed,get host(){return host;}};
 }
-it("fixture native timeout fences immediately while Pi tool is still live, never accepts its successor or replays",async()=>{
+it("fixture native timeout settles only that call; Pi continues and finishes the turn",async()=>{
  const f=await fixture();const run=f.agent.prompt({role:"user",content:"Offline fixture",timestamp:1});
  await f.state.toolStarted.promise;await f.state.invoked.promise;
  f.emit("timedOut");
- // Resolve only from real Host/Connection ingress, with no sleep or authored deadline.
- await f.state.fenced.promise;
+ // Let host ingress process the frame; the timeout must not fence anything.
+ await new Promise<void>(r=>setImmediate(r));await new Promise<void>(r=>setImmediate(r));
+ expect(f.host.fencedReason).toBeUndefined();
  expect(f.host.batches).toBe(true);
- expect(f.host.fencedReason).toContain("Muse native tool timeout: mcp__pi__bash");
- expect(f.host.fencedReason).toContain("~300000 ms native elapsed");
- expect(f.state.runs).toEqual([JSON.parse(real.frames.commit.params.record.payload.event.tool_calls[0].args)]);
- expect(f.agent.state.messages.filter((m:any)=>m.role==="toolResult")).toHaveLength(0);
- f.emit("nativeResult");f.emit("nextCommit");f.emit("terminal");
+ f.emitConsumed();f.emit("terminal");
  f.state.toolRelease.resolve();await run;
  const last:any=f.agent.state.messages.at(-1);
- expect(last.stopReason).toBe("error");expect(last.errorMessage).toContain("Muse native tool timeout:");
- expect(last.errorMessage).toContain("no automatic resubmit");expect(last.errorMessage).not.toContain("overlapping");
+ expect(last.stopReason).toBe("stop");
+ expect(f.host.fencedReason).toBeUndefined();
+ expect(f.state.runs).toEqual([JSON.parse(real.frames.commit.params.record.payload.event.tool_calls[0].args)]);
+ expect(f.agent.state.messages.filter((m:any)=>m.role==="toolResult")).toHaveLength(1);
  expect(f.state.runs).toHaveLength(1);
  expect(f.state.commands.filter((c:any)=>c.method==="turn/start")).toHaveLength(1);
+ // Pi's late result stays in what Pi journaled; it is never replayed to Muse.
  expect(f.state.results.some((r:any)=>r.result?.content?.[0]?.text==="local Pi result after root intervention")).toBe(false);
  const {flushMuseLedger,museLedgerPath}=await import("../src/request-ledger.js");await flushMuseLedger();
  const ledger=readFileSync(museLedgerPath(),"utf8").trim().split("\n").map(l=>JSON.parse(l));
  expect(ledger.find((r:any)=>r.processId===f.host.ledger.processId && r.type==="tool_execution_divergence")).toMatchObject({tool:"mcp__pi__bash",status:"timedOut",piResultJournaled:false,pendingMcp:true});
- expect(ledger.find((r:any)=>r.processId===f.host.ledger.processId && r.type==="retire" && r.reason==="fenced")).toMatchObject({cause:"Muse native tool timeout"});
+ expect(ledger.find((r:any)=>r.processId===f.host.ledger.processId && r.type==="tool_native_timeout_consumed")).toMatchObject({tool:"mcp__pi__bash",deliveredToMcp:false,exactModelConsumption:false});
+ expect(ledger.some((r:any)=>r.processId===f.host.ledger.processId && r.type==="retire" && r.reason==="fenced" && r.cause==="Muse native tool timeout")).toBe(false);
 });

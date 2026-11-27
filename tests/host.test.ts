@@ -49,7 +49,11 @@ function fixture(extra: Partial<MuseHostOptions> = {}, beforeOpen?: (f: ReturnTy
       if (frame.method === "mcpServer/readInventory") { incoming.push({jsonrpc:"2.0",id:frame.id,error:{code:-32601,message:"method not found",data:{kind:"methodNotFound",retryable:false}}}); return; }
       if (frame.method === "session/start") {
         beforeOpen?.(result);
-        reply(frame, { session: { sessionId: "server-session" }, viewCursor: "0" });
+        reply(frame, { session: { sessionId: "server-session",
+          ...(extra.privatePrompt ? {permissionState: {reviewerAuthority:"human"}} : {}),
+        }, viewCursor: "0" });
+      } else if (frame.method === "usage/read") {
+        reply(frame, {usage:{}});
       } else if (frame.method === "turn/start") {
         turn++;
         const turnId = `turn-${turn}`;
@@ -111,6 +115,68 @@ test("pre-spawn gates and immutable official launch recipe", async () => {
     "--config", 'run.toolset=["mcp__pi__lookup"]', "--disable-request-user-input", "--provider", "echo"]);
   assert.equal(launch.env?.MUSE_NO_AUTO_UPDATE, "1");
   assert.equal(launch.shutdownTimeoutMs, undefined, "SDK, not tether, owns its default deadline");
+});
+
+test("live launch adds exactly client web_search without changing the declared Pi names", () => {
+  const original = process.env.PI_MUSE_TETHER_LIVE;
+  try {
+    process.env.PI_MUSE_TETHER_LIVE = "1";
+    const args = museLaunchOptions(options({
+      echo: false, nativeSearch: true, tools: ["web_search", "lookup"],
+      binary: "/synthetic-muse", promptMode: "replace", privatePrompt: {systemPrompt:"fixture"},
+    })).args;
+    assert.ok(args?.includes('run.toolset=["mcp__pi__web_search","mcp__pi__lookup","web_search"]'));
+    assert.ok(args?.includes('tools.web_search.mode="client"'));
+    assert.ok(args?.includes("tools.web_fetch.enabled=false"));
+  } finally {
+    if (original === undefined) delete process.env.PI_MUSE_TETHER_LIVE;
+    else process.env.PI_MUSE_TETHER_LIVE = original;
+  }
+});
+
+test("client search stays out of Pi batches and emits ordered, correlated display data", async () => {
+  const wire = JSON.parse(readFileSync(new URL("./fixtures/vendor-retry.json", import.meta.url), "utf8"));
+  process.env.PI_MUSE_TETHER_LIVE = "1";
+  const f = (() => {
+    try {
+      return fixture({ tools: ["read"], toolBatches: true, nativeSearch: true, echo: false,
+        promptMode:"replace", privatePrompt:{systemPrompt:"fixture"} });
+    } finally { delete process.env.PI_MUSE_TETHER_LIVE; }
+  })();
+  try {
+    await f.host.open();
+    const {turnId} = await f.host.submitInput("offline search");
+    const batch = structuredClone(wire.batch);
+    const rec = batch.params.record;
+    rec.payload.run_id = turnId;
+    for (const key of ["payload_schema_version","payload_type","record_type","recorded_at","schema_version","sequence","stream"])
+      rec[key] ??= rec.payload[key];
+    const args = '{"query":"find something"}';
+    const piCalls = rec.payload.event.tool_calls.map((call: any) => call.call_id);
+    rec.payload.event.tool_calls.unshift({call_id:"native-1",name:"web_search",args});
+    f.host.receive(batch);
+    const item = {kind:"toolCall", tool:"web_search", turnId, itemId:"item-1", callId:"native-1", args};
+    const start = frame("item/started", {item:{...item, revision:1, status:"inProgress"}});
+    const completion = frame("item/completed", {item:{...item, revision:2, status:"completed",
+      visibleOutput:JSON.stringify({query:"find something",results:[{title:"Example",url:"https://example.org/",snippet:"untrusted"}]})}});
+    for (const event of [start,start,completion,completion]) f.host.receive(event);
+    assert.equal(f.host.fencedReason, undefined);
+    assert.equal(f.host.batches, true);
+    assert.deepEqual(f.events.filter(e=>e.kind==="tool-batch").map(e=>e.calls.map(c=>c.callId)),[piCalls]);
+    const search = f.events.filter(e=>e.kind==="native-search").map(e=>e.entry);
+    assert.deepEqual(search.map(e=>[e.phase,e.query,e.callId]),
+      [["started","find something","native-1"],["completed","find something","native-1"]]);
+    assert.deepEqual(search[1].sources, [{title:"Example",url:"https://example.org/"}]);
+    // Same query, different call, terminal-only and without source bytes.
+    f.host.receive(frame("item/completed", {item:{...item, itemId:"item-2", callId:"native-2",
+      revision:1, status:"completed", truncated:true, visibleOutput:"{\"query\":"}}));
+    assert.deepEqual(f.events.filter(e=>e.kind==="native-search").at(-1)?.entry,
+      {phase:"completed",status:"completed",sources:null,sessionId:"server-session",turnId,callId:"native-2",query:"find something"});
+    f.host.receive(frame("item/started", {item:{...item, tool:"web_fetch"}}));
+    assert.equal(f.host.fencedReason, "Undeclared Muse tool item");
+    const cancel = await f.waitWrite(w=>w.method==="turn/cancel");
+    assert.equal(cancel.params.turnId, turnId);
+  } finally { await f.host.close(); }
 });
 
 test("preflight capability refuses compaction and unsupported mode", () => {
@@ -379,6 +445,21 @@ test("Spark 1.2 catalogue effort guard refuses unsupported turns before submissi
     await assert.rejects(f.host.submitInput("unsupported continuation", "max"), /absent from official model\/list/);
     assert.equal(f.writes.filter(w=>w.method === "turn/start").length,1);
   } finally {await f.host.close();}
+});
+
+test("omitted Pi effort selects the supported floor on the actual MSP frame, including warm turns", async () => {
+  const f = fixture({model:"muse-ember-1.0", catalogueEfforts:["ultra", "high", "minimal"]});
+  try {
+    await f.host.open();
+    let turn = await f.host.submitInput("first fixture turn");
+    f.host.receive(frame("turn/completed", {turnId:turn.turnId,terminal:"completed"}));
+    turn = await f.host.submitInput("explicit warm level", "high");
+    f.host.receive(frame("turn/completed", {turnId:turn.turnId,terminal:"completed"}));
+    await assert.rejects(f.host.submitInput("request true off", "off" as any), /absent from official model\/list/);
+    turn = await f.host.submitInput("warm omission");
+    f.host.receive(frame("turn/completed", {turnId:turn.turnId,terminal:"completed"}));
+    assert.deepEqual(f.writes.filter(x=>x.method === "turn/start").map(x=>x.params.reasoningEffort), ["minimal","high","minimal"]);
+  } finally { await f.host.close(); }
 });
 
 // The policy latch is process-wide and intentionally cannot be reset.

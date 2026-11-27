@@ -1,13 +1,16 @@
 import {
   createAssistantMessageEventStream,
   isContextOverflow,
+  isRetryableAssistantError,
 } from "@earendil-works/pi-ai";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { museEffort, thinkingFrame } from "./thinking-config.js";
 import { assertToolResultVerifiable, toolResultReceipt, readStoredToolOutput } from "./tool-result-receipt.js";
-import { museCurrentInput, museHistoryInput } from "./image-input.js";
+import { museCurrentInput, museReplayInput } from "./image-input.js";
+import { PI_SUMMARY_SYSTEM, planMuseTurns, summaryReplay } from "./turn-plan.js";
+import type { PlanEpisode } from "./request-ledger.js";
 import { currentUserStart } from "./history.js";
-import { applyMuseUsage, museModelCost } from "./usage.js";
+import { applyMuseUsage, museApiReference, NO_PRICE_TABLE, NO_USAGE, UNKNOWN_RATES } from "./usage.js";
 import { randomUUID } from "node:crypto";
 import { publishRetryStatus, publishRedactionStatus } from "./retry-status.js";
 import { piContext } from "pi-tether-core/pi-context";
@@ -21,9 +24,10 @@ import {
   type BridgeInvocation,
   type BridgeResult,
 } from "pi-tether-core/mcp/bridge";
-import { openMuseHost, type MuseHost } from "./host.js";
-import { streamRawCompletion } from "./raw-completion.js";
+import { openMuseHost, type MuseHost, type MuseHostEvent } from "./host.js";
+import { assertToolSchemasWithinEnumLimit } from "./tool-schema.js";
 import type { MuseHostOptions } from "./host.js";
+import { NATIVE_SEARCH_TOOL, nativeSearchRequested, strictMuse, nativeSearchRefusal, type NativeSearchSurface } from "./native-search.js";
 
 import { isQualifiedMuseModel, museResponseIdentity, museModelRoute } from "./model-route.js";
 export { isQualifiedMuseModel } from "./model-route.js";
@@ -33,29 +37,45 @@ export { isQualifiedMuseModel } from "./model-route.js";
  * Muse owns/folds its SDK state first; callbacks observe, not replace, events. */
 function requestHooks(model:any,options:any,onError:(error:Error)=>void) {
   if(!options.onResponse && !options.onProviderStreamEvent)return {
-    enqueue:(work:()=>void)=>work(),observe:(_event:any,consume:()=>void)=>consume(),admit:async(_acceptance:string)=>{},
+    enqueue:(work:()=>void)=>work(),observe:(event:MuseHostEvent,consume:()=>void)=>{if(event.kind!=="admission-refused")consume();},
+    admit:async(_acceptance:string)=>{},refusalResponse:()=>undefined,
   };
   let admitted=false,failed=false;
+  let refusal: Extract<MuseHostEvent,{kind:"admission-refused"}> | undefined;
+  let refusalObservation: Promise<void> | undefined;
   let tail=Promise.resolve();
   const waiting:Array<()=>Promise<void>|void>=[];
   const enqueue=(work:()=>Promise<void>|void)=>{
     if(failed)return;
     if(!admitted){waiting.push(work);return;}
     tail=tail.then(async()=>{if(!failed)await work();}).catch(error=>{
-      failed=true;onError(error instanceof Error?error:new Error(String(error)));
+      if(!failed){failed=true;onError(error instanceof Error?error:new Error(String(error)));}
     });
   };
   return {
     enqueue,
-    observe(event:any,consume:()=>void) {
-      // Failure control is immediate even when admission never succeeds. It
-      // cannot wait behind a response observer or be mistaken for a response.
+    observe(event:MuseHostEvent,consume:()=>void) {
+      if(event.kind==="admission-refused") {
+        if(!admitted && !failed)refusal=event;
+        failed=true;waiting.length=0;return;
+      }
+      // Fencing retires the binding immediately, independently of observation.
       if(event.kind==="fenced"){failed=true;waiting.length=0;consume();return;}
       enqueue(async()=>{
         await options.onProviderStreamEvent?.({transport:"official-muse-client",source:"muse-host",event:structuredClone(event)},model);
+        if(failed)return;
         options.signal?.throwIfAborted();
         consume();
       });
+    },
+    refusalResponse() {
+      if(!refusal || !options.onResponse)return;
+      const status=refusal.httpStatus??0;
+      // An observer cannot replace a native refusal, even if it throws or
+      // aborts. Invoke it outside SDK ingress, after failure control has run.
+      return refusalObservation ??= Promise.resolve().then(async()=>{
+        await options.onResponse({status,headers:{"x-pi-tether-transport":"official-muse-client","x-pi-tether-response":"logical-refusal"}},model);
+      }).catch(()=>undefined);
     },
     async admit(acceptance:string) {
       if(admitted || failed)return;
@@ -70,6 +90,8 @@ function requestHooks(model:any,options:any,onError:(error:Error)=>void) {
 /** Isolated instance for qualification fixtures; production uses the qualified default below. */
 export function createMuseProvider(config: {
   openHost?: (options: MuseHostOptions) => Promise<MuseHost>;
+  /** Test entry can supply a preselected replay plan without a billed large payload. */
+  planTurns?: typeof planMuseTurns;
   promptModes?: PromptMode[];
   instructionMechanisms?: string[];
   promptMode?: PromptMode | ((model:any)=>PromptMode);
@@ -87,37 +109,45 @@ const capabilities = {
 const selectMode=(model:any):PromptMode => (process.env.PI_MUSE_TETHER_SYSTEM_PROMPT ?? (typeof config.promptMode === "function" ? config.promptMode(model) : config.promptMode) ?? "none") as PromptMode;
 function rawCompletionQualified(model:any) {return selectMode(model)==="replace" && Boolean(config.rawCompletion && config.promptModes?.includes("replace") && capabilities.instructionMechanisms.length);}
 let sessionManager: any;
+let searchSurface: NativeSearchSurface | undefined;
+let replayNotice: ((stages: number) => void) | undefined;
 let parking = true;
 let compactionPermit: { manager:any; boundary:string; hash:string; overflow:boolean } | undefined;
 /** Only Pi's committed automatic compaction authorizes a fresh mid-turn import.
  * Use the actual latest boundary: Pi 1.5 may report an older entry when
  * repeated summaries are byte-identical. Never authorize from summary text. */
 async function committedCompaction(event:any) {
-  await retireAll("session_compact");
-  const boundary=sessionManager?.getBranch?.().at(-1);
-  if (boundary?.type !== "compaction" || !["threshold","overflow"].includes(event.reason)) return;
-  if (event.reason === "overflow" && !event.willRetry) return;
-  const projected=sessionManager?.buildSessionProjection?.().messages;
-  if (!projected) return;
-  compactionPermit={manager:sessionManager,boundary:boundary.id,hash:historyHash(piContext({messages:convertToLlm(projected)}).messages),overflow:event.reason==="overflow"};
+  const manager=sessionManager;
+  const boundary=manager?.getBranch?.().at(-1);
+  const projected=boundary?.type === "compaction" && (event.reason === "threshold" || event.reason === "overflow" && event.willRetry)
+    ? manager.buildSessionProjection?.().messages : undefined;
+  // This is an explicit Pi-owned cut after a committed batch, not permission
+  // to replay an earlier failed or aborted attempt.
+  await retireAll("session_compact", Boolean(projected));
+  if (!projected || sessionManager !== manager || manager.getBranch().at(-1)?.id !== boundary.id) return;
+  compactionPermit={manager,boundary:boundary.id,hash:historyHash(piContext({messages:convertToLlm(projected)}).messages),overflow:event.reason==="overflow"};
 }
-function setSessionManager(manager: any, canPark = true) {
+function setSessionManager(manager: any, canPark = true, search?: NativeSearchSurface, onReplay?: (stages: number) => void) {
   sessionManager = manager;
+  searchSurface = search;
+  replayNotice = onReplay;
   parking = canPark;
 }
 type Episode = {
   stream: any;
   output: any;
   ended: boolean;
-  textIndex?: number;
   detachAbort?: () => void;
-  thinking?: Map<string,number>;
+  text: Map<string,{index?:number;closed?:boolean}>;
+  thinking: Map<string,number>;
   hooks: ReturnType<typeof requestHooks>;
 };
 type Binding = {
   key: string;
   requestHash: string;
-  bridge: ReturnType<typeof createMcpBridge>;
+  bridge?: ReturnType<typeof createMcpBridge>;
+  auxiliary: boolean;
+  plan?: PlanEpisode;
   host?: MuseHost;
   messages: any[];
   messageHash: string;
@@ -137,7 +167,7 @@ type Binding = {
   abort: AbortController;
   pending: Map<string, { invocation: BridgeInvocation; callId: string; result?: BridgeResult; verified: boolean }>;
   batch?: string[];
-  batchSpec?: Array<{callId:string;name:string;args:Record<string,unknown>;piCallId:string;verified?:boolean;nativeStart?:{itemId:string;turnId:string;recordedAt:string};journal?:{entryId:string;response:BridgeResult}}>;
+  batchSpec?: Array<{callId:string;name:string;args:Record<string,unknown>;piCallId:string;verified?:boolean;nativeTimedOut?:boolean;nativeStart?:{itemId:string;turnId:string;recordedAt:string};journal?:{entryId:string;response:BridgeResult}}>; 
   tools: Array<{name:string;description:string;inputSchema:any}>;
   approvalHolds: Map<string,{approvalId:string;requirement:string;ready:boolean;promise:Promise<void>;resolve:()=>void;reject:(error:Error)=>void}>;
   steeringPending?: boolean;
@@ -162,8 +192,9 @@ const retryBlocks=new Map<string,{hash:string;reason:string}>();
 // to replay failed work. Prefer Pi's actual native user entry for the fence.
 // Minimal fixture managers without native user entries use the whole user run,
 // never just its last (possibly fixed extension-note) message.
-const lastUserHash=(messages:any[])=>{
-  const entry=sessionManager?.getBranch?.().filter((e:any)=>e.type==="message" && e.message?.role==="user").at(-1);
+const lastUserHash=(messages:any[],manager:any)=>{
+  const entry=manager?.getBranch?.().filter((e:any)=>e.type==="message" && e.message?.role==="user").at(-1);
+  if (typeof entry?.id === "string") return `entry:${entry.id}`;
   if(entry)return projectionHash(entry.message);
   let end=messages.length;
   while(end && messages[end-1].role!=="user")end--;
@@ -182,9 +213,9 @@ const canonical = (value: any): string =>
           .join(",")}}`
     : JSON.stringify(value);
 function message(model: any): any {
-  const unknownPrice = isQualifiedMuseModel(model.id) && museModelCost(model.id).input === null;
+  const liveRecipe = isQualifiedMuseModel(model.id);
   return {
-    ...(unknownPrice ? {costSource:"unknown:no-applicable-price-table;not-subscription-billing",costPartial:true} : {}),
+    ...(liveRecipe ? {costSource: museApiReference(model.id)?.cost ? NO_USAGE : NO_PRICE_TABLE, costPartial: true} : {}),
     role: "assistant",
     content: [],
     api: "pi-muse-tether",
@@ -197,8 +228,8 @@ function message(model: any): any {
       cacheRead: 0,
       cacheWrite: 0,
       totalTokens: 0,
-      cost: unknownPrice
-        ? { input: null, output: null, cacheRead: null, cacheWrite: null, total: null }
+      cost: liveRecipe
+        ? { ...UNKNOWN_RATES, total: null }
         : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
     usagePresence: {
@@ -212,64 +243,132 @@ function message(model: any): any {
     timestamp: Date.now(),
   };
 }
-async function closeBinding(b: Binding) {
+function textDelta(e: Episode, item: {index?:number}, delta: string) {
+  if (!delta) return;
+  if (item.index === undefined) {
+    item.index=e.output.content.length;
+    e.output.content.push({type:"text",text:""});
+    e.stream.push({type:"text_start",contentIndex:item.index,partial:e.output});
+  }
+  e.output.content[item.index].text += delta;
+  e.stream.push({type:"text_delta",contentIndex:item.index,delta,partial:e.output});
+}
+function endText(e: Episode, item: {index?:number;closed?:boolean}) {
+  if (item.closed) return;
+  item.closed=true;
+  if (item.index !== undefined)
+    e.stream.push({type:"text_end",contentIndex:item.index,content:e.output.content[item.index].text,partial:e.output});
+}
+function finishVisible(e: Episode) {
+  for (const item of e.text.values()) endText(e,item);
+  for (const [id,index] of e.thinking) if (index >= 0) {
+    e.stream.push({type:"thinking_end",contentIndex:index,content:e.output.content[index].thinking,partial:e.output});
+    e.thinking.set(id,-2);
+  }
+}
+function translateVisible(e: Episode, frame: any) {
+  const p=frame.params ?? {}, agent=p.item?.kind === "agentMessage" ? p.item : undefined;
+  if (agent && (frame.method === "item/started" || frame.method === "item/completed")) {
+    if (typeof agent.itemId !== "string") throw new Error("Muse text lacks native item identity");
+    if (!e.text.has(agent.itemId)) e.text.set(agent.itemId,{});
+    const item=e.text.get(agent.itemId)!;
+    if (frame.method === "item/completed") {
+      const before=item.index === undefined ? "" : e.output.content[item.index].text;
+      if (typeof agent.text === "string") {
+        if (!agent.text.startsWith(before) || (item.closed && agent.text !== before))
+          throw new Error("Muse committed text differs from streamed item");
+        if (!item.closed) textDelta(e,item,agent.text.slice(before.length));
+      }
+      endText(e,item);
+    }
+  } else if (frame.method === "item/delta" && (p.field === undefined || p.field === "text") && typeof p.delta === "string") {
+    const item=e.text.get(p.itemId);
+    if (item && !item.closed) textDelta(e,item,p.delta);
+  }
+  thinkingFrame(e.output,e.stream,frame,e.thinking);
+}
+async function closeBinding(b: Binding, cause?: string) {
   publishRetryStatus(b);
   if (b.closed) return b.closing;
   b.closed = true;
-  // Retain ownership until cleanup really finishes. Otherwise session_shutdown
-  // can miss a fenced binding whose asynchronous close is still in flight.
+  if (cause && !b.auxiliary && (b.plan || b.host && b.host.retrySafe !== true) && (!b.episode?.ended || b.batch))
+    retryBlocks.set(b.key, { hash: b.requestHash, reason: cause });
+  // Retain ownership until cleanup really finishes. Mark the host closing
+  // before releasing approval waiters or aborting startup.
+  const closingHost = b.host?.close(cause === "Request aborted" ? "abort" : "close");
+  void closingHost?.catch(() => undefined);
+  b.abort.abort();
+  b.detachTurnAbort?.();
+  for (const hold of b.approvalHolds.values()) hold.reject(new Error("Muse approval hold: binding retired before delivery"));
+  b.approvalHolds.clear();
+  b.receiptsDone?.(); b.receiptsDone=undefined;
+  const e=b.episode;
+  if(e&&!e.ended){
+    e.ended=true;e.detachAbort?.();finishVisible(e);
+    if (b.auxiliary) e.output.content=[];
+    e.output.stopReason="aborted";e.output.errorMessage=cause === "Request aborted" ? cause : "Muse binding retired";
+    e.stream.push({type:"error",reason:"aborted",error:e.output});e.stream.end();
+  }
   b.closing=Promise.resolve().then(async()=>{
-    b.detachTurnAbort?.();
-    for(const hold of b.approvalHolds.values())hold.reject(new Error("Muse approval hold: binding retired before delivery"));
-    b.approvalHolds.clear();
-    b.receiptsDone?.(); b.receiptsDone=undefined;
-    b.abort.abort();
-    const e=b.episode;
-    if(e&&!e.ended){
-      e.ended=true;e.detachAbort?.();e.output.stopReason="aborted";e.output.errorMessage="Muse binding retired";
-      e.stream.push({type:"error",reason:"aborted",error:e.output});e.stream.end();
-    }
     try {
-      const opened=b.host??await b.opening?.catch(()=>undefined);
-      await Promise.allSettled([opened?.close(),b.bridge.retire()]);
-    }
-    finally {if(bindings.get(b.key)===b)bindings.delete(b.key);}
+      // Keep the MCP descriptor alive until the opening host settles.
+      const closeHost = closingHost ?? (await b.opening?.catch(()=>undefined))?.close();
+      await Promise.allSettled([closeHost, b.bridge?.retire()]);
+    } finally {if(bindings.get(b.key)===b)bindings.delete(b.key);}
   });
   return b.closing;
 }
-async function retireAll(reason = "retireAll") {
+async function retireAll(reason = "retireAll", committedCut = false) {
   compactionPermit=undefined;
   for (const b of bindings.values()) b.host?.ledger?.retire(reason);
-  await Promise.allSettled([...bindings.values()].map(closeBinding));
+  await Promise.allSettled([...bindings.values()].map(b=>closeBinding(b, committedCut ? undefined : reason)));
 }
-function fail(b: Binding, reason: string) {
-  if(b.host?.retrySafe!==true)retryBlocks.set(b.key,{hash:b.requestHash,reason});
+function fail(b: Binding, reason: string, definitelyUnsubmitted=false) {
+  if (b.closed) return;
+  if(!b.auxiliary && (b.plan || (!definitelyUnsubmitted && b.host?.retrySafe!==true)))retryBlocks.set(b.key,{hash:b.requestHash,reason});
   const e = b.episode;
-  b.host?.fence(reason);
+  if (!definitelyUnsubmitted) b.host?.fence(reason);
   if (e && !e.ended) {
     e.ended = true;
     e.detachAbort?.();
-    const aborted = reason === "Request aborted";
-    e.output.stopReason = aborted ? "aborted" : "error";
+    finishVisible(e);
+    if (b.auxiliary) e.output.content=[]; // Do not expose an unverified summary as a result.
+    e.output.stopReason = "error";
     e.output.errorMessage = reason;
-    e.stream.push({
-      type: "error",
-      reason: e.output.stopReason,
-      error: e.output,
-    });
-    e.stream.end();
+    if (b.plan && !isContextOverflow(e.output) && isRetryableAssistantError(e.output)) {
+      // Upstream retry language refers to a single native turn, not this
+      // logical plan. Pi must not replay stages that may already have run.
+      e.output.errorMessage = "Muse staged replay stopped after a native failure. No automatic replay; inspect the request ledger.";
+    }
+    const terminal = () => {
+      e.stream.push({ type: "error", reason: e.output.stopReason, error: e.output });
+      e.stream.end();
+    };
+    const observation = e.hooks.refusalResponse();
+    if (observation) void observation.then(terminal);
+    else terminal();
   }
   void closeBinding(b);
 }
 const sequentialCalls = new WeakMap<Binding, BridgeInvocation[]>();
 const sequentialStarts = new WeakMap<Binding, Map<string,{itemId:string;turnId:string;recordedAt:string}>>();
 function settleBatch(b:Binding) {
-  if (b.batchSpec?.every(c=>c.verified)) {
+  if (b.batchSpec?.every(c=>c.verified || c.nativeTimedOut)) {
     b.batch=undefined; b.batchSpec=undefined; b.batchSurfaced=false;
     b.receiptsDone?.(); b.receiptsDone=undefined;
     const next = sequentialCalls.get(b)?.shift();
     if (next && !b.closed) surface(b, next);
   }
+}
+function terminalError(event:any, output:any) {
+  const error=event.frame?.params?.error;
+  const detail=[error?.message,event.frame?.params?.reason,error?.kind,event.lastRetryCause]
+    .find((v):v is string=>typeof v==="string" && v.trim().length>0);
+  // Only the vendor model terminal can enter Pi's context overflow route.
+  if (typeof detail==="string" && isContextOverflow({...output,stopReason:"error",errorMessage:detail}))
+    return `Muse context overflow: ${detail}`;
+  const status=error?.httpStatus ?? error?.status ?? error?.statusCode ?? (event.status==="failed" ? event.lastRetryHttpStatus : undefined);
+  return `Muse turn ended ${event.status}${typeof status==="number" ? ` (HTTP ${status})` : ""}${detail ? `: ${detail}` : ""}`;
 }
 function emitFrame(b: Binding, event: any) {
   if (b.closed) return;
@@ -321,12 +420,16 @@ function emitFrame(b: Binding, event: any) {
       fail(b,`Muse approval hold: native ${item.tool} ${item.callId} ended ${item.status} before actual MCP result delivery; no replay`);return;
     }
   }
-  // Native tool termination is lifecycle state, not an ordinary future receipt.
-  // Muse can time out its MCP request while Pi is still executing the tool.
-  // Never defer that divergence until Pi returns, or accept the next batch.
+  // A Muse client native tool deadline is lifecycle state for the one call,
+  // not a fence for the whole turn. The client times out its own MCP
+  // request (~300 s observed on the wire; the qualified MSP/session MCP
+  // surface offers no deadline control) and continues with a timeout
+  // result for that call while Pi may still be executing. Record the
+  // divergence now and settle only this call; Pi's journaled result is
+  // never replayed to Muse and the turn carries on.
   if(event.kind==="frame") {
     const {method,params:p={}}=event.frame,item=p.item;
-    const spec=item?.kind==="toolCall" ? b.batchSpec?.find(c=>c.callId===item.callId && !c.verified) : undefined;
+    const spec=item?.kind==="toolCall" ? b.batchSpec?.find(c=>c.callId===item.callId && !c.verified && !c.nativeTimedOut) : undefined;
     if (!spec && method === "item/started" && item?.kind === "toolCall") {
       const reservation=b.reservations.get(item.callId);
       if (reservation && item.tool === `mcp__pi__${reservation.name}`) {
@@ -345,8 +448,11 @@ function emitFrame(b: Binding, event: any) {
           const elapsed=Date.parse(item.recordedAt)-Date.parse(spec.nativeStart?.recordedAt ?? "");
           const observed=Number.isFinite(elapsed) && elapsed>=0 ? ` (~${Math.round(elapsed/1000)*1000} ms native elapsed; ${elapsed} ms from native timestamps)` : " (native elapsed unavailable)";
           const reason=`Muse native tool timeout: ${spec.name} ${item.callId} timedOut${observed}; Pi execution/consumption diverged; no replay`;
-          b.host?.ledger?.record("tool_execution_divergence",{callId:item.callId,tool:spec.name,status:item.status,sourceRange:p.sourceRange,nativeStart:spec.nativeStart,nativeCompletedAt:item.recordedAt,piResultJournaled:Boolean(spec.journal),pendingMcp:b.pending.has(item.callId),reason});
-          fail(b,reason);return;
+          const pendingMcp=b.pending.has(item.callId);
+          b.host?.ledger?.record("tool_execution_divergence",{callId:item.callId,tool:spec.name,status:item.status,sourceRange:p.sourceRange,nativeStart:spec.nativeStart,nativeCompletedAt:item.recordedAt,piResultJournaled:Boolean(spec.journal),pendingMcp,reason});
+          spec.nativeTimedOut=true;
+          b.pending.delete(item.callId);
+          return;
         }
       } catch(error:any) {fail(b,`Muse native tool lifecycle: ${error.message}`);return;}
     }
@@ -365,26 +471,36 @@ function emitFrame(b: Binding, event: any) {
     // confirmed by turn/steer. A completed target must fail loudly, not drop it.
     if (b.steeringPending && event.status === "completed") { b.deferredTerminal=event; return; }
     if (event.status !== "completed") {
-      const detail = event.frame?.params?.error?.message;
-      // Preserve Pi's native overflow entry path without introducing a new
-      // generic retry policy or replaying an uncertain host request.
-      const overflow = typeof detail === "string" && isContextOverflow({...e.output,stopReason:"error",errorMessage:detail});
-      const error = event.frame?.params?.error;
-      const status = error?.httpStatus ?? error?.status ?? error?.statusCode ?? (event.status === "failed" ? event.lastRetryHttpStatus : undefined);
-      fail(b, overflow ? `Muse context overflow: ${detail}` : `Muse turn ended ${event.status}${typeof status === "number" ? ` (HTTP ${status})` : ""}${typeof detail === "string" ? `: ${detail}` : ""}`);
+      fail(b,terminalError(event,e.output));
       return;
     }
-    if (b.pending.size || b.batch) {
+    if (b.pending.size || (b.batch && b.batchSpec?.some(c=>!c.verified && !c.nativeTimedOut))) {
       fail(b, "Muse result consumption is unverified");
       return;
     }
-    if (e.textIndex !== undefined)
-      e.stream.push({
-        type: "text_end",
-        contentIndex: e.textIndex,
-        content: e.output.content[e.textIndex].text,
-        partial: e.output,
-      });
+    // A batch fully settled by native tool timeouts needs no receipt to retire.
+    if (b.batch) { b.batch=undefined; b.batchSpec=undefined; b.batchSurfaced=false; }
+    finishVisible(e);
+    if (!b.tools.length && (!e.output.content.some((part:any)=>part.type === "text" && part.text.trim()) ||
+      !e.output.usagePresence.input || !e.output.usagePresence.output)) {
+      fail(b,"Muse tool-free completion lacks verified text or native input/output usage");
+      return;
+    }
+    const expectsStructured = b.tools.some((t) => t.name === "structured_output");
+    const satisfiedStructured = b.messages.some(
+      (m: any) => m?.role === "toolResult" && m.toolName === "structured_output" && !m.isError,
+    );
+    if (expectsStructured && !satisfiedStructured) {
+      const textLength = e.output.content
+        .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+        .reduce((sum: number, part: any) => sum + part.text.length, 0);
+      b.host?.ledger?.record("structured_output_omitted", { textLength });
+      fail(
+        b,
+        "Muse turn completed with plain text without calling declared structured_output; plain text preserved on the assistant message, no automatic resubmit",
+      );
+      return;
+    }
     e.ended = true;
     e.detachAbort?.();
     b.messages.push(structuredClone(e.output));
@@ -395,6 +511,10 @@ function emitFrame(b: Binding, event: any) {
     return;
   }
   if (event.kind === "tool-batch") {
+    if (!b.bridge) { fail(b,"Muse raw completion emitted tool/helper activity"); return; }
+    // A predecessor batch fully settled (including by native timeouts) no
+    // longer blocks Muse's next committed batch.
+    if (b.batch && b.batchSpec?.every(c=>c.verified || c.nativeTimedOut)) settleBatch(b);
     if (b.batch || !event.calls.length || new Set(event.calls.map((x:any)=>x.callId)).size !== event.calls.length) {
       fail(b, "Muse duplicate or overlapping committed tool batch"); return;
     }
@@ -415,29 +535,7 @@ function emitFrame(b: Binding, event: any) {
   if (event.kind !== "frame") return;
   const frame = event.frame,
     p = frame.params ?? {};
-  thinkingFrame(e.output,e.stream,frame,e.thinking??=new Map());
-  if (
-    frame.method === "item/delta" &&
-    p.field === "text" &&
-    typeof p.delta === "string"
-  ) {
-    if (e.textIndex === undefined) {
-      e.textIndex = e.output.content.length;
-      e.output.content.push({ type: "text", text: "" });
-      e.stream.push({
-        type: "text_start",
-        contentIndex: e.textIndex,
-        partial: e.output,
-      });
-    }
-    e.output.content[e.textIndex].text += p.delta;
-    e.stream.push({
-      type: "text_delta",
-      contentIndex: e.textIndex,
-      delta: p.delta,
-      partial: e.output,
-    });
-  }
+  try { translateVisible(e,frame); } catch(error:any) { fail(b,error.message); return; }
   if (frame.method === "session/tokenUsage" && p.usage) {
     const usageId = p.sourceRange?.last?.id ?? p.viewCursor;
     if (typeof usageId !== "string") {
@@ -465,7 +563,7 @@ function emitFrame(b: Binding, event: any) {
       let images: import("./tool-result-receipt.js").UnverifiableImage[] = [];
       let truncatedView: import("./tool-result-receipt.js").TruncatedView | undefined;
       const receipt = toolResultReceipt(item, r, stored, spans => { redactions = spans; }, declared => { images = declared; }, view => { truncatedView = view; });
-      if (!b.bridge.verifyContent(pending.invocation, receipt))
+      if (!b.bridge?.verifyContent(pending.invocation, receipt))
         throw new Error("Muse tool result mismatch");
       if (truncatedView) b.host?.ledger?.record("tool_result_truncated_view", {
         callId:item.callId, piToolCallId:b.batchSpec?.find(c=>c.callId===item.callId)?.piCallId ?? pending.invocation.piCallId, itemId:item.itemId,
@@ -514,9 +612,9 @@ function emitFrame(b: Binding, event: any) {
 function attach(b: Binding, e: Episode, signal?: AbortSignal) {
   b.detachTurnAbort?.();
   b.episode = e;
-  b.host?.ledger?.beginEpisode(b.batch ? "handoff" : "turn");
+  b.host?.ledger?.beginEpisode(b.batch ? "handoff" : "turn",b.plan);
   if (signal) {
-    const abort = () => fail(b, "Request aborted");
+    const abort = () => { void closeBinding(b, "Request aborted"); };
     signal.addEventListener("abort", abort, { once: true });
     e.detachAbort = () => signal.removeEventListener("abort", abort);
     b.detachTurnAbort=e.detachAbort;
@@ -531,6 +629,7 @@ function attach(b: Binding, e: Episode, signal?: AbortSignal) {
   for (const event of events) e.hooks.enqueue(() => emitFrame(b, event));
 }
 function surface(b: Binding, inv: BridgeInvocation) {
+  if (b.closed) throw new Error("Muse binding retired before invocation");
   const callId = (inv.metadata as any)?.callId;
   const reservation =
     typeof callId === "string" ? b.reservations.get(callId) : undefined;
@@ -578,7 +677,7 @@ function deliverResult(b:Binding,spec:NonNullable<Binding["batchSpec"]>[number])
   const pending=b.pending.get(spec.callId);
   if(!pending || !spec.journal || pending.result || b.closed)return;
   pending.result=spec.journal.response;
-  b.bridge.journalResult({...pending.invocation,journalEntryId:spec.journal.entryId,result:spec.journal.response});
+  b.bridge!.journalResult({...pending.invocation,journalEntryId:spec.journal.entryId,result:spec.journal.response});
 }
 function flushTools(b: Binding) {
   const e=b.episode;
@@ -586,13 +685,7 @@ function flushTools(b: Binding) {
   if (!e || e.ended) {fail(b,"Pi episode detached during committed MCP batch");return;}
   const executable=b.batchSpec;
   b.batchSurfaced=true;
-  if (e.textIndex !== undefined)
-    e.stream.push({
-      type: "text_end",
-      contentIndex: e.textIndex,
-      content: e.output.content[e.textIndex].text,
-      partial: e.output,
-    });
+  finishVisible(e);
   for(const spec of executable) {
   const toolCall = {
     type: "toolCall",
@@ -629,37 +722,35 @@ function streamEffective(model: any, input: any, options: any = {}) {
   }
   const context = piContext(input);
   const requestedMode = selectMode(model);
-  if (!context.tools.length) {
-    if (rawCompletionQualified(model))
-      return streamRawCompletion(model, context, options, message, async hostOptions => {
-        const hooks=requestHooks(model,options,error=>hostOptions.onEvent?.({kind:"fenced",reason:error.message}));
-        const host=await openHost({...hostOptions,onEvent:event=>hooks.observe(event,()=>hostOptions.onEvent?.(event))});
-        return new Proxy(host,{get(target,key){
-          if(key==="submitInput")return async (...args:any[])=>{
-            try {
-              const ack=await (target.submitInput as any)(...args);
-              await hooks.admit("turn/start");
-              return ack;
-            } catch(error) {
-              // Admission can fence before the raw stream begins awaiting its
-              // terminal promise. Preserve the host's neutral no-replay reason.
-              if(target.fencedReason)throw new Error(target.fencedReason);
-              throw error;
-            }
-          };
-          const value=Reflect.get(target,key,target);
-          return typeof value==="function"?value.bind(target):value;
-        }});
-      }, "replace");
-    // Refuse before looking up or attaching the coding binding. A failed summary
-    // must not retire or settle an unrelated parked coding request.
+  const toolFree = context.tools.length === 0;
+  if (toolFree && !rawCompletionQualified(model)) {
     const refused=createAssistantMessageEventStream();const output=message(model);
     output.stopReason="error";output.errorMessage="Muse raw completion and compaction are unsupported: prompt delivery unqualified";
     refused.push({type:"error",reason:"error",error:output});refused.end();return refused;
   }
+  const manager = sessionManager;
+  const owner = String(manager?.getSessionId?.() ?? "");
+  const current = bindings.get(owner);
+  // Tool availability is not a lifetime signal. Only an exact projection of
+  // the active journal can park an empty-tool host. Auxiliary requests never
+  // acquire or mutate its binding, even when Pi reuses its routing string.
+  let journalChat = false;
+  if (toolFree && context.systemPrompt !== PI_SUMMARY_SYSTEM && parking && owner && options.sessionId === owner && options.cacheRetention !== "none" &&
+      manager?.getSessionFile?.() && context.messages.at(-1)?.role === "user" &&
+      (!current || current.closed || (current.episode?.ended && !current.batch))) {
+    const native = manager.getBranch?.().at(-1);
+    const projected = manager.buildSessionProjection?.().messages;
+    journalChat = Boolean(projected && (native?.message?.role === "user" || native?.type === "custom_message") &&
+      historyHash(piContext({messages:convertToLlm(projected)}).messages) === historyHash(context.messages));
+  }
+  const auxiliary = toolFree && !journalChat;
+  const owningManager = auxiliary ? undefined : manager;
+  const searchEnabled = !auxiliary && model.id !== "echo" && nativeSearchRequested();
+  const search = searchEnabled ? searchSurface : undefined;
+  const key = auxiliary ? `auxiliary:${randomUUID()}` : String(options.sessionId ?? owner);
   const stream = createAssistantMessageEventStream();
   const output = message(model);
-  const episode: Episode = { stream, output, ended: false, hooks: requestHooks(model,options,error=>{
+  const episode: Episode = { stream, output, ended: false, text:new Map(), thinking:new Map(), hooks: requestHooks(model,options,error=>{
     if(binding)fail(binding,error.message);
     else {output.stopReason="error";output.errorMessage=error.message;stream.push({type:"error",reason:"error",error:output});stream.end();}
   }) };
@@ -668,28 +759,24 @@ function streamEffective(model: any, input: any, options: any = {}) {
     let b: Binding | undefined;
     try {
       museEffort(options.reasoning); // reject unknown tiers before host work
-      const context = piContext(input);
-      const owner = String(sessionManager?.getSessionId?.() ?? "");
-      const key = String(options.sessionId ?? owner);
-      const permit=compactionPermit;
-      compactionPermit=undefined; // one Pi coding attempt, never a retry ticket
-      const compactedContinuation=Boolean(permit && permit.manager===sessionManager &&
-        sessionManager?.getBranch?.().at(-1)?.id===permit.boundary &&
+      const permit=auxiliary ? undefined : compactionPermit;
+      if (!auxiliary) compactionPermit=undefined; // one Pi coding attempt, never a retry ticket
+      const compactedContinuation=Boolean(permit && permit.manager===manager &&
+        manager?.getBranch?.().at(-1)?.id===permit.boundary &&
         historyHash(context.messages)===permit.hash);
       if (compactedContinuation && permit!.overflow && retryBlocks.get(key)?.reason.startsWith("Muse context overflow:")) retryBlocks.delete(key);
       const blocked=retryBlocks.get(key);
-      if(blocked && (blocked.hash===lastUserHash(context.messages) || context.messages.at(-1)?.role==="toolResult"))throw new Error((blocked.reason.startsWith("Muse native tool timeout:") || blocked.reason.startsWith("Muse approval hold:")) ? `${blocked.reason}; no automatic resubmit. Submit a new user request explicitly.` : "Muse prior request failed; no automatic resubmit. Submit a new user request explicitly.");
+      if(blocked && (blocked.hash===lastUserHash(context.messages,owningManager) || context.messages.at(-1)?.role==="toolResult"))throw new Error((blocked.reason.startsWith("Muse native tool timeout:") || blocked.reason.startsWith("Muse approval hold:")) ? `${blocked.reason}; no automatic resubmit. Submit a new user request explicitly.` : "Muse prior request failed; no automatic resubmit. Submit a new user request explicitly.");
       // A genuinely new user request ends the old failure fence. Otherwise that
       // stale fence would incorrectly block this new request's later tool batch.
       if(blocked && context.messages.at(-1)?.role==="user")retryBlocks.delete(key);
-      b = bindings.get(key);
-      if (!context.tools.length)
-        throw new Error("Muse raw completion and compaction are unsupported");
       const mode = requestedMode;
       assertPromptMode(capabilities, mode as PromptMode);
+      if (searchEnabled && (!search || mode !== "replace"))
+        throw new Error("Muse native search requires a Pi session display and private prompt replacement; no prompt was sent.");
       if (model.id !== "echo" && process.env.PI_MUSE_TETHER_LIVE !== "1")
         throw new Error("Live Muse requires explicit PI_MUSE_TETHER_LIVE=1");
-      if (!owner || key !== owner)
+      if (!auxiliary && (!owner || key !== owner))
         throw new Error(
           "Pi session identity is required and must match the active journal",
         );
@@ -698,17 +785,25 @@ function streamEffective(model: any, input: any, options: any = {}) {
         description: t.description,
         inputSchema: t.parameters,
       }));
+      // Refuse schemas over the provider's 3,000-enum cap locally before
+      // touching any binding or spawning a host; nothing was submitted.
+      assertToolSchemasWithinEnumLimit(tools);
       const declarationHash = projectionHash(tools);
       const route = museModelRoute(model.id);
-      const signature = requestSignature([model.id, route?.contributorMode, context.systemPrompt, tools, mode, process.cwd()]);
+      const signature = requestSignature([model.id, route?.contributorMode, context.systemPrompt, tools, mode, process.cwd(),
+        ...(search ? ["native:client-web-search"] : [])]);
       b = bindings.get(key);
       if(b?.closed){await closeBinding(b);b=undefined;}
       if (options.signal?.aborted) {
-        if (b) b.episode = episode;
+        if (b && b.batch) {
+          b.episode = episode;
+          await closeBinding(b, "Request aborted");
+          return;
+        }
         throw new Error("Request aborted");
       }
       if (b && (
-        b.manager !== sessionManager || b.signature !== signature ||
+        b.manager !== owningManager || b.signature !== signature ||
         b.declarationsHash !== declarationHash ||
         !matchesPrefix(context.messages, { length: b.messages.length, hash: b.messageHash }, historyHash) ||
         (!b.batch && (context.messages.length <= b.messages.length || !context.messages.slice(b.messages.length).every((m:any)=>m.role === "user")))
@@ -731,9 +826,9 @@ function streamEffective(model: any, input: any, options: any = {}) {
           attach(b, episode, options.signal);
           if (b.closed) return;
           b.messages = structuredClone(context.messages);
-          b.requestHash=lastUserHash(context.messages);
+          b.requestHash=lastUserHash(context.messages,owningManager);
           b.messageHash = historyHash(b.messages);
-          await b.host!.submitInput(text, museEffort(options.reasoning));
+          await b.host!.submitInput(text, options.reasoning);
           await episode.hooks.admit("turn/start");
           return;
         }
@@ -783,21 +878,31 @@ function streamEffective(model: any, input: any, options: any = {}) {
         // Reject unqualified rich layouts before delivering ANY batch response.
         // Captured LF text projection and [text, PNG] placeholder are checked
         // at the native receipt; image content remains explicitly unverifiable.
-        assertToolResultVerifiable(response);
+        // A natively timed-out call is excluded from delivery; its Pi result
+        // is never delivered to Muse, so the layout gate does not apply.
+        if(!pending.nativeTimedOut)assertToolResultVerifiable(response);
         return {pending,entry,response};
         });
         episode.hooks.enqueue(()=>stream.push({type:"start",partial:output}));
         attach(b, episode, options.signal);
         if (b.closed) return;
         b.messages = structuredClone(context.messages);
-        b.requestHash=lastUserHash(context.messages);
+        b.requestHash=lastUserHash(context.messages,owningManager);
         b.messageHash = historyHash(context.messages);
         // The native suspended MCP request already exists. A response hook may
         // refuse its continuation before any journaled result is delivered.
         await episode.hooks.admit("suspended-mcp-continuation");
+        if(b.closed)return;
         b.steeringPending=steering.length>0;
         const consumed=steering.length?new Promise<void>(resolve=>{b!.receiptsDone=resolve;}):undefined;
         for(const {pending,entry,response} of journaled){
+          if(pending.nativeTimedOut){
+            // Muse already consumed the native timeout for this call (the
+            // departed MCP request is never revived). Pi keeps its real result
+            // in the journal; the divergence is declared, not replayed.
+            b.host?.ledger?.record("tool_native_timeout_consumed",{callId:pending.callId,piToolCallId:pending.piCallId,tool:pending.name,piJournalEntryId:entry.id,deliveredToMcp:false,modelConsumedNative:"timedOut",exactModelConsumption:false,evidence:"declared-lossy"});
+            continue;
+          }
           pending.journal={entryId:entry.id,response};
           const hold=b.approvalHolds.get(pending.callId);
           if(hold) {
@@ -817,7 +922,7 @@ function streamEffective(model: any, input: any, options: any = {}) {
         if(terminal)emitFrame(b,terminal);
         return;
       }
-      const text = museHistoryInput(context.messages, compactedContinuation);
+      const projection=summaryReplay(museReplayInput(context.messages,compactedContinuation),context.systemPrompt,auxiliary);
       const reservations = new Map<
         string,
         {
@@ -828,7 +933,7 @@ function streamEffective(model: any, input: any, options: any = {}) {
         }
       >();
       let candidate!: Binding;
-      const bridge = createMcpBridge({
+      const bridge = toolFree ? undefined : createMcpBridge({
         sessionId: key,
         generation: randomUUID(),
         argumentValidation: "pi",
@@ -837,13 +942,13 @@ function streamEffective(model: any, input: any, options: any = {}) {
       });
       candidate = {
         key,
-        requestHash:lastUserHash(context.messages),
-        bridge,
+        requestHash:lastUserHash(context.messages,owningManager),
+        bridge, auxiliary,
         messages: structuredClone(context.messages),
         messageHash: historyHash(context.messages),
         declarationsHash: declarationHash,
         signature,
-        park: parking && Boolean(sessionManager?.getSessionFile?.()),
+        park: !auxiliary && parking && Boolean(manager?.getSessionFile?.()),
         reservations,
         tools,
         approvalHolds:new Map(),
@@ -851,7 +956,7 @@ function streamEffective(model: any, input: any, options: any = {}) {
         closed: false,
         usageIds: new Set(),
         pending: new Map(), batchSurfaced:false,
-        manager: sessionManager,
+        manager: owningManager,
         abort: new AbortController(),
       };
       b = candidate;
@@ -860,23 +965,24 @@ function streamEffective(model: any, input: any, options: any = {}) {
       episode.hooks.enqueue(()=>stream.push({type:"start",partial:output}));
       attach(b, episode, options.signal);
       if (b.closed) return;
-      const descriptor = await bridge.start();
+      const descriptor = await bridge?.start();
       if (b.closed) return;
       const host = await (b.opening=openHost({
         cwd: process.cwd(),
-        piSessionId: key,
-        reasoningEffort: museEffort(options.reasoning),
+        piSessionId: auxiliary ? undefined : key,
+        ...(toolFree ? {purpose:"raw" as const} : {}),
+        ...(search ? {nativeSearch:true} : {}),
         tools: tools.map((t: any) => t.name),
         promptMode: mode as PromptMode,
         ...(mode === "replace" ? {privatePrompt:{systemPrompt:context.systemPrompt}} : {}),
         echo: model.id === "echo",
-        toolBatches: config.toolBatches ?? model.id !== "echo",
+        toolBatches: !toolFree && (config.toolBatches ?? model.id !== "echo"),
         model: model.id === "echo" ? undefined : route?.modelId ?? model.id,
         contributorMode: route?.contributorMode ?? "on",
         pickerModel: model.id,
         signal: b.abort.signal,
-        mcpServers: { pi: { transport: "stdio", ...descriptor } },
-        waitForToolReceipt: () => candidate.verifyingReceipt ? (async()=>{
+        mcpServers: descriptor ? { pi: { transport: "stdio", ...descriptor } } : {},
+        ...(descriptor ? {waitForToolReceipt: () => candidate.verifyingReceipt ? (async()=>{
           while(candidate.verifyingReceipt)await candidate.verifyingReceipt;
         })() : undefined,
         waitForPiToolResult: (request:any) => {
@@ -929,20 +1035,47 @@ function streamEffective(model: any, input: any, options: any = {}) {
           } catch {
             return false;
           }
-        },
-        onEvent: (event: any) => candidate.episode!.hooks.observe(event,()=>emitFrame(candidate, event)),
+        }} : {}),
+        onEvent: event => candidate.episode!.hooks.observe(event, () => {
+          if (event.kind === "native-search") {
+            if (!candidate.closed && search && searchSurface === search && sessionManager === manager) search.record(event.entry);
+            return;
+          }
+          const item = search && event.kind === "frame" ? event.frame.params?.item as Record<string, unknown> | undefined : undefined;
+          if (item?.kind === "toolCall" && item.tool === NATIVE_SEARCH_TOOL) return; // Never enter Pi receipt processing.
+          emitFrame(candidate, event);
+        }),
       }));
       b.host = host;
-      host.ledger?.beginEpisode();
-      if (b.closed || options.signal?.aborted) {
-        await host.close();
-        return;
+      if (b.closed) return; // The binding owner awaits and closes the opening host.
+      b.abort.signal.throwIfAborted();
+      const plan=(config.planTurns ?? planMuseTurns)(projection,host.measureTurn(options.reasoning));
+      if (plan.stages.length) {
+        if (search) throw new Error("Muse staged replay requires native search to be off; no stage was submitted.");
+        b.park=false; // A staged native session exists only for this logical request.
+        const id=randomUUID(),turns=plan.stages.length+1;
+        bridge?.setAttached(false);
+        for (const [i,input] of plan.stages.entries()) {
+          b.plan={id,phase:"stage",index:i+1,turns};
+          host.ledger?.beginEpisode(i===0 ? "spawn" : "turn",b.plan);
+          const terminal=await host.submitStage(input,options.reasoning,i===0 ? () => {
+            if (sessionManager === manager) replayNotice?.(plan.stages.length);
+          } : undefined);
+          host.ledger?.record("replay_stage_terminal",{status:terminal.status});
+          host.ledger?.endEpisode();
+          if (terminal.status!=="completed") throw new Error(terminalError(terminal,output));
+          b.abort.signal.throwIfAborted();
+        }
+        b.plan={id,phase:"final",index:turns,turns};
+        bridge?.setAttached(true); // Only after the last acknowledged matching terminal.
       }
-      await host.submitInput(text, museEffort(options.reasoning));
+      search?.announce();
+      host.ledger?.beginEpisode(plan.stages.length ? "turn" : "spawn",b.plan);
+      await host.submitInput(plan.final, options.reasoning);
       await episode.hooks.admit("turn/start");
     } catch (error: any) {
       const reason = b?.host?.fencedReason ?? String(error?.message || error);
-      if (b) { b.episode = episode; fail(b, reason); }
+      if (b) { b.episode = episode; fail(b, reason, error?.code === "MUSE_FRAME_TOO_LARGE" && !b.plan); }
       else {
         episode.ended = true;
         output.stopReason = options.signal?.aborted ? "aborted" : "error";
@@ -962,16 +1095,26 @@ function streamViaMuse(model:any,input:any,options:any={}) {
   const stream=createAssistantMessageEventStream();
   void (async()=>{
     try {
+      if (model.id !== "echo" && nativeSearchRequested() && strictMuse()) throw new Error(nativeSearchRefusal);
       // Expose the logical official-client request, not an invented HTTP body.
       const payload={...structuredClone(piContext(input)),transport:"official-muse-client"};
+      if(payload.tools.length) {
+        payload.tools[0].description+=`\n\nTransport notice: the official-client transcript view of a tool result may be truncated; full model consumption cannot be inferred from that view. [REDACTED] in tool text can be official-client redaction; original bytes in those spans are unavailable. Literal [REDACTED] may already be source text: a marker alone does not prove loss. The client may canonicalize bearer to Bearer immediately before a redaction. Tool images are delivered without pixel attestation; GIF/WebP visibility is unqualified. Images attached to failed tool results are omitted by the official client.`;
+      }
       const replacement=await options.onPayload?.(payload,model);
       const effective=replacement===undefined?payload:replacement;
       if(!effective || typeof effective!=="object" || !Array.isArray(effective.messages) || !Array.isArray(effective.tools) || typeof effective.systemPrompt!=="string")
         throw new Error("Muse onPayload must return a logical request with systemPrompt, messages and tools");
       if(effective.messages.some((entry:any)=>entry?.role==="system"))
         throw new Error("Muse logical payload messages exclude system messages; edit logical systemPrompt and tools instead");
-      const request={...effective,tools:effective.tools.map((tool:any,index:number)=>index ? tool : ({...tool,description:`${tool.description??""}\n\nTransport notice: the official-client transcript view of a tool result may be truncated; full model consumption cannot be inferred from that view. [REDACTED] in tool text can be official-client redaction; original bytes in those spans are unavailable. Literal [REDACTED] may already be source text: a marker alone does not prove loss. The client may canonicalize bearer to Bearer immediately before a redaction. Tool images are delivered without pixel attestation; GIF/WebP visibility is unqualified. Images attached to failed tool results are omitted by the official client.`}))};
-      for await(const event of streamEffective(model,request,options))stream.push(event);
+      const names=new Set<string>();
+      for(const tool of effective.tools) {
+        if(typeof tool?.name!=="string" || !/^[A-Za-z0-9_-]+$/.test(tool.name) || names.has(tool.name) ||
+          typeof tool.description!=="string" || !tool.parameters || typeof tool.parameters!=="object" || Array.isArray(tool.parameters))
+          throw new Error("Muse logical payload tools require distinct exact names, descriptions and parameter schemas");
+        names.add(tool.name);
+      }
+      for await(const event of streamEffective(model,effective,options))stream.push(event);
       stream.end();
     } catch(error:any) {
       const output=message(model);output.stopReason=options.signal?.aborted?"aborted":"error";output.errorMessage=String(error?.message??error);

@@ -1,6 +1,6 @@
 /** One explicitly authorized native Pi proof. Never part of npm test. */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, symlinkSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +28,10 @@ const messages=events.filter(event=>event.type==="message_end").map(event=>event
 const assistant=messages.filter(message=>message?.role==="assistant");
 const text=JSON.stringify(assistant.at(-1)?.content);
 const degradationNotices=(result.stderr??"").split("\n").filter(line=>line.includes('"code":"MUSE_FEATURE_DEGRADED"') && line.includes('"feature":"rawLog"'));
-const ok=degradationNotices.length===1 && result.status===0 && calls.length===2 && calls.every(call=>call.toolName==="read") && !assistant.some(message=>message.stopReason==="error") && text?.includes("LEFT_29_4f86") && text.includes("RIGHT_29_7c31");
-const receipt={ok,degradationNotices,exitCode:result.status,signal:result.signal,binary,requests:"one native Pi prompt; tool continuations only",degradation:"unqualified build: default shipped extension selects sequential tools; real official binary and existing subscription login",toolCalls:calls.map(call=>({name:call.toolName,args:call.args})),assistantStopReasons:assistant.map(message=>message.stopReason),productionInstall:false};
+const ledgerPath=join(output,"state/pi-muse-tether/requests.jsonl");
+const ledger=readFileSync(ledgerPath,"utf8").trim().split("\n").filter(Boolean).map(line=>JSON.parse(line));
+const recorded=ledger.some(row=>row.type==="route_degraded" && row.feature==="rawLog");
+const ok=degradationNotices.length===0 && recorded && result.status===0 && calls.length===2 && calls.every(call=>call.toolName==="read") && !assistant.some(message=>message.stopReason==="error") && text?.includes("LEFT_29_4f86") && text.includes("RIGHT_29_7c31");
+const receipt={ok,degradationNotices,recorded,exitCode:result.status,signal:result.signal,binary,requests:"one native Pi prompt; tool continuations only",degradation:"unqualified build: default shipped extension selects sequential tools; real official binary and existing subscription login",toolCalls:calls.map(call=>({name:call.toolName,args:call.args})),assistantStopReasons:assistant.map(message=>message.stopReason),productionInstall:false};
 writeFileSync(join(output,"receipt.json"),JSON.stringify(receipt,null,2)+"\n");console.log(JSON.stringify(receipt,null,2));
 if(!ok) process.exitCode=1;

@@ -1,3 +1,4 @@
+import {fixtureMeasureTurn} from "./fixture-measure.js";
 import {appendFile, access} from 'node:fs/promises';
 import {watch} from 'node:fs';
 import {spawn} from 'node:child_process';
@@ -12,8 +13,8 @@ export default async function(pi:any){
   await record({kind:'open'});
   let turn=0, child:any;
   const emit=options.onEvent;
-  const complete=async()=>{await record({kind:'host-terminal',round:turn});emit({kind:'frame',frame:{method:'item/delta',params:{field:'text',delta:'INJECTED_COMPLETE_'+turn}}});emit({kind:'terminal',status:'completed'});};
-  return {batches:true,retrySafe:false,
+  const complete=async()=>{await record({kind:'host-terminal',round:turn});emit({kind:'frame',frame:{method:'item/completed',params:{item:{kind:'agentMessage',itemId:'visible-'+turn,text:'INJECTED_COMPLETE_'+turn}}}});emit({kind:'terminal',status:'completed'});};
+  return {batches:true,retrySafe:false,measureTurn:fixtureMeasureTurn,
    fence(reason:string){void record({kind:'fence',reason});},async cancelTurn(){},
    async close(){if(child&&child.exitCode===null){const exit=new Promise(r=>child.once('exit',r));child.stdin.end();await exit;}await record({kind:'close'});},
    async steerInput(text:any){await record({kind:'host-steer',round:turn,text});await complete();},

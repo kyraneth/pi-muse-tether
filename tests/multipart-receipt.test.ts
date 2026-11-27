@@ -1,12 +1,75 @@
 import {describe,it,expect} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {assertToolResultVerifiable,toolResultReceipt} from '../src/tool-result-receipt.js';
+import {assertToolResultVerifiable,toolResultReceipt,type VendorRedaction} from '../src/tool-result-receipt.js';
 const fixture=(name:string)=>JSON.parse(readFileSync(new URL(`./fixtures/${name}`,import.meta.url),'utf8'));
 const text=fixture('multipart-text.json'),image=fixture('multipart-image.json');
 const wire=fixture('multipart-wire.json');
 const redacted=fixture('redacted-read.json');
 const verify=(capture:any,mutation:any={},report=(images:any)=>{})=>toolResultReceipt({...capture.item,...mutation},capture.sent,undefined,undefined,report);
+
+const png = {type:'image' as const, mimeType:'image/png', data:'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAD0lEQVR4nGNgcPgPQhAKAB72BP2KdvSkAAAAAElFTkSuQmCC'};
+const code = {type:'text' as const, text:'copper-harbor-290437'};
+const legacy = '[MCP image content: media_type=image/png, bytes=72]';
+const measured = '[MCP image content: media_type=image/png, bytes=72, dimensions=2x2]';
+const observed = {sent:{content:[code,png],isError:false},item:{status:'completed',visibleOutput:`${code.text}\n${measured}`}};
+
+describe('Muse 1.4.25 multipart image projection',()=>{
+ it('accepts the exact 88-byte slice_fixture projection observed on Muse 1.4.25',()=>{
+  expect(Buffer.byteLength(observed.item.visibleOutput)).toBe(88);
+  const reports:unknown[]=[];
+  expect(verify(observed,{},images=>reports.push(...images))).toBe(observed.sent);
+  expect(reports).toEqual([{partIndex:1,mimeType:'image/png',byteLen:72,sha256:createHash('sha256').update(Buffer.from(png.data,'base64')).digest('hex')}]);
+ });
+ it('anchors a normalized image with changed dimensions to the source header',()=>{
+  expect(verify(observed,{visibleOutput:`${code.text}\n[MCP image content: media_type=image/jpeg, bytes=120, dimensions=1x1, source_dimensions=2x2]`})).toBe(observed.sent);
+ });
+ it('allows a same-dimension GIF-to-PNG re-encode',()=>{
+  const gif={type:'image' as const,mimeType:'image/gif',data:'R0lGODlhAgACAIAAAAAAAP///yH5BAEAAAEALAAAAAACAAIAAAICBFEAOw=='};
+  const capture={...observed,sent:{content:[code,gif],isError:false}};
+  expect(verify(capture)).toBe(capture.sent);
+ });
+ it('keeps part offsets after an image and multibyte text before redaction',()=>{
+  const sent={content:[{type:'text' as const,text:'α\n'},png,{type:'text' as const,text:'bearer secret'}],isError:false};
+  const visibleOutput=`α\n\n${measured}\nBearer [REDACTED]`;
+  const spans:VendorRedaction[]=[];
+  expect(toolResultReceipt({status:'completed',visibleOutput},sent,undefined,r=>spans.push(...r),()=>{})).toBe(sent);
+  expect(spans[0]).toMatchObject({piOffsetBytes:Buffer.byteLength(`α\n\n${measured}\nbearer `),sources:[{partIndex:2,partOffsetBytes:7,byteLen:6}]});
+ });
+ it('reads measured placeholders from full truncated output',()=>{
+  expect(toolResultReceipt({...observed.item,visibleOutput:'copper…',truncated:true},observed.sent,observed.item.visibleOutput,undefined,()=>{})).toBe(observed.sent);
+ });
+ it.each([
+  measured.replace('2x2','3x2'), measured.replace('2x2','2x3'), measured.replace('2x2','0x2'),
+  measured.replace('2x2','1x1, source_dimensions=3x2'), measured.replace('2x2','2x2, source_dimensions=2x2'),
+  measured.replace('2x2','[REDACTED]'), measured.replace('72','[REDACTED]'), '[REDACTED]',
+  measured.replace('image/png','text/plain'), measured.replace('72','0'), measured.replace('72','072'),
+  legacy.replace(']',', saved to /tmp/img.png]'), measured+'\r', measured+'\n', measured+'!',
+ ])('refuses malformed image lines %j without reporting delivery',line=>{
+  const reports:unknown[]=[];
+  expect(()=>verify(observed,{visibleOutput:`${code.text}\n${line}`},images=>reports.push(...images))).toThrow();
+  expect(reports).toEqual([]);
+ });
+ it.each([
+  [[code,png],`copper-harbor-290438\n${measured}`], [[code,png],`${code.text}\n\n${measured}`],
+  [[png,code],`${measured}\n${code.text}!`],
+  [[{...code,text:legacy},png],`${measured}\n${measured}`],
+ ] as const)('refuses mutations to surrounding text without reporting delivery',(content,visibleOutput)=>{
+  const reports:unknown[]=[];
+  expect(()=>verify({...observed,sent:{content,isError:false}},{visibleOutput},images=>reports.push(...images))).toThrow(/projection mismatch/);
+  expect(reports).toEqual([]);
+ });
+ it('refuses dimension-bearing placeholders in reordered image slots',()=>{
+  const bytes=Buffer.from(png.data,'base64');
+  bytes.writeUInt32BE(40,16);bytes.writeUInt32BE(20,20);
+  const second={...png,data:bytes.toString('base64')};
+  const capture={sent:{content:[second,png],isError:false},item:{status:'completed',visibleOutput:`${measured.replace('2x2','40x20')}\n${measured}`}};
+  expect(verify(capture)).toBe(capture.sent);
+  const reports:unknown[]=[];
+  expect(()=>verify(capture,{visibleOutput:capture.item.visibleOutput.split('\n').reverse().join('\n')},images=>reports.push(...images))).toThrow(/projection mismatch/);
+  expect(reports).toEqual([]);
+ });
+});
 
 describe('Muse 1.4.14 multipart projection on synthetic fixtures (no inference)',()=>{
  it('binds the wire answer to the text_image scenario, exact call and turn',()=>{

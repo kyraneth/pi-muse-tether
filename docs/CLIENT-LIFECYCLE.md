@@ -7,7 +7,7 @@ Code tether. Meta owns updates; the tether owns capability negotiation and
 runtime validation. `PI_MUSE_TETHER_BINARY` remains an explicit absolute-path
 override. Production does not force `MUSE_NO_AUTO_UPDATE`; development, tests,
 qualification and proofs set it to `1`. `PI_MUSE_TETHER_STRICT_VERSION=1` remains
-an explicit refusal above the tested range. Otherwise newer builds warn and run.
+an explicit refusal above the tested range. Otherwise newer builds run and the ledger and doctor report that the version is unqualified.
 
 The originally proposed pinned-client store was rejected and is not shipped.
 The emergency binary override is not an alternate automatic installation route.
@@ -47,6 +47,18 @@ metadata, not copied or repaired. Explicit `MUSE_AUTH_PATH` is inherited by the
 official client. There is no impersonation, second credential store, or API-key
 fallback; `META_API_KEY` is excluded from the model host environment.
 
+Catalogue discovery and each Muse host give only their vendor subprocesses
+writable `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` under `TMPDIR`.
+Discovery keeps the client's normal home and config selection and copies its saved
+model catalogue, if present, into the disposable data root. The client still
+chooses the provider and profile; a bundled response is not registered as a live
+catalogue. Discovery failures are printed at startup (including `--list-models`)
+and remain visible in `/muse-doctor`. A private host shares its disposable roots
+between `skills list` and `serve`. Bundled skills
+may be materialized again when a new host opens. Pi, the tether ledger and
+qualification evidence still use their own configured paths, which must be
+writable when used. Account access is still required for live use.
+
 ## Batching is a capability, not a build string
 
 A new build is not denied for lacking qualification evidence: it runs sequential
@@ -70,6 +82,28 @@ authentication and incompatible base protocols still refuse. A server-required
 upgrade is surfaced as `MUSE_UPGRADE_REQUIRED`, never silently retried on a
 different client.
 
+## Stopping a turn
+
+Pi owns cancellation. The tether retires the host, requests `turn/cancel` at
+most once if it knows the active native turn ID, and closes and reaps through
+the SDK without waiting for a cancel acknowledgement. A matching orderly
+`session/closed` during that close is not a failure. An unsolicited close
+while work is pending still fences the request. A lost admission reply means
+Muse may already have accepted work; the tether does not silently replay the
+same Pi user entry. Cancellation does not undo tools that Pi already ran.
+
+For an opt-in live check, start isolated Pi RPC with the Muse extension, a
+copied official binary, a separate ledger and the account owner's existing
+login link. Select `pi-muse-tether/muse-ember-1.0` at `minimal` and send one
+short `prompt`. On the first observed native start (or `turn_admitted` ledger
+row), send `{"id":"abort","type":"abort"}` on the same RPC stdin. Pi's initial
+`agent_start` is not evidence of Muse admission. Check the RPC abort response
+and aborted assistant output, one matching `turn_cancel_requested` ledger row,
+and the child exit. `turn_terminal_during_close`, if present, is native status;
+a cancel request or process exit alone does not prove the vendor stopped work
+or billing. If the answer wins the race, report that the intended abort
+boundary was not observed; do not automatically retry.
+
 ## Offline conformance and isolation evidence
 
 The official echo probe waits for `mcpServer/readInventory` to report its fixture
@@ -91,7 +125,7 @@ ordinary configuration home. There is no client-store environment or pin state.
 
 A vendor tether must separate: (1) official executable identity/update ownership,
 (2) protocol capability negotiation, (3) schema-checked optional accelerations,
-and (4) qualification evidence. A version warning is not evidence that optional
+and (4) qualification evidence. An unqualified-version diagnostic is not evidence that optional
 capabilities work, and an unknown optional capability must not deny a basic turn.
 No vendor tether may silently switch identities, create another login, replay an
 unknown request, or write test/proof telemetry to the user's live ledger.
@@ -100,7 +134,7 @@ check results; they enable optional accelerations, not whole-turn admission.
 The private replacement requires experimental negotiation; if withheld, the
 isolated host is reopened before any model request with supported
 `run.developer_prompt` instructions appended to Muse's own prompt. A typed
-notice names that reduced guarantee. Missing session MCP refuses with build and
+ledger and doctor name that reduced guarantee. Missing session MCP refuses with build and
 cause; there is no fallback to vendor-owned tools.
 
 This document specifies the shared contract; it does not claim the separate

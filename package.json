@@ -1,15 +1,37 @@
 {
   "name": "pi-muse-tether",
-  "version": "0.2.1",
+  "version": "0.2.7",
   "type": "module",
   "description": "Use your Muse Code subscription in Pi through the official client",
   "license": "MIT",
-  "keywords": ["pi-package", "pi", "muse", "tether"],
-  "repository": {"type": "git", "url": "https://github.com/kyraneth/pi-muse-tether.git"},
+  "keywords": [
+    "pi-package",
+    "pi",
+    "muse",
+    "tether"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kyraneth/pi-muse-tether.git"
+  },
   "homepage": "https://github.com/kyraneth/pi-muse-tether#readme",
-  "bugs": {"url": "https://github.com/kyraneth/pi-muse-tether/issues"},
-  "engines": {"node": ">=24"},
-  "files": ["index.ts", "src/", "README.md", "CHANGELOG.md", "LICENSE", "assets/", "docs/DETAILS.md", "docs/CLIENT-LIFECYCLE.md", "docs/CLIENT-QUALIFICATION.md"],
+  "bugs": {
+    "url": "https://github.com/kyraneth/pi-muse-tether/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "assets/",
+    "docs/DETAILS.md",
+    "docs/CLIENT-LIFECYCLE.md",
+    "docs/CLIENT-QUALIFICATION.md"
+  ],
   "dependencies": {
     "@muse-code/sdk": "1.4.14",
     "pi-tether-core": "0.1.1"
@@ -38,6 +60,7 @@
     "test:proof": "node scripts/test-guard.mjs --proof -- node --import tsx",
     "dev:install-core": "node scripts/install-core-main.mjs",
     "scan:public": "node scripts/check-public-tree.mjs",
+    "smoke:installed": "bash scripts/smoke-installed.sh",
     "export:manifest": "node scripts/export-manifest"
   }
 }

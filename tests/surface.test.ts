@@ -10,7 +10,8 @@ import {
   thinkingFrame,
 } from "../src/thinking-config.js";
 import { museUserParts, museHistoryParts } from "../src/image-input.js";
-import { applyMuseUsage, CONTRIBUTOR_COST } from "../src/usage.js";
+import { applyMuseUsage } from "../src/usage.js";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   quotaPayload,
   quotaExhausted,
@@ -155,7 +156,7 @@ describe("Muse surface contracts; no inference", () => {
       /unsupported/,
     );
   });
-  it("retains native counters, subtracts cached input exactly once, last context not spend; contributor pricing only", () => {
+  it("retains native counters, subtracts cache once, and prices the legacy alias as contributor", () => {
     const o = make();
     const p = {
       usage: {
@@ -176,16 +177,8 @@ describe("Muse surface contracts; no inference", () => {
     expect(o.usage.cacheRead).toBe(160);
     expect(o.usage.output).toBe(20);
     expect(o.usage.totalTokens).toBe(111);
-    expect(CONTRIBUTOR_COST).toEqual({
-      input: 0.1,
-      output: 0.2,
-      cacheRead: 0.002,
-      cacheWrite: 0,
-    });
-    expect(o.usage.cost.total).toBeCloseTo(
-      (40 * 0.1 + 160 * 0.002 + 20 * 0.2) / 1e6,
-      12,
-    );
+    const { cost } = getBuiltinModels("meta").find(row => row.id === "muse-spark-1.3-contributor")!;
+    expect(o.usage.cost.total).toBeCloseTo((40 * cost.input + 160 * cost.cacheRead + 20 * cost.output) / 1e6, 12);
     expect(o.costSource).toMatch(/^derived:/);
     expect(o.nativeCumulativeCost.usd).toBe(3);
     expect(() =>
@@ -196,6 +189,23 @@ describe("Muse surface contracts; no inference", () => {
     expect(unknown.usagePresence.input).toBe(false);
     expect(unknown.nativeUsage[0].inputTokens).toBeNull();
     expect(unknown.costPartial).toBe(true);
+  });
+  it("never prices absent usage or marks an episode complete from complementary partial records", () => {
+    const o = make();
+    applyMuseUsage(o, { totalTokens: 123, cumulative: { cost: { usd: 4 } } });
+    expect(o.usage.cost.total).toBeNull();
+    expect(o.costSource).toMatch(/^unknown:no-usable-native-usage/);
+    applyMuseUsage(o, { usage: { inputTokens: 10, cachedTokens: 3 } });
+    applyMuseUsage(o, { usage: { outputTokens: 5, cacheWriteTokens: 0 } });
+    expect(o.usage).toMatchObject({ input: 7, output: 5, cacheRead: 3, cacheWrite: 0, totalTokens: 123 });
+    expect(o.usagePresence).toEqual({ input:true, output:true, cacheRead:true, cacheWrite:true });
+    expect(o.usage.cost.total).toBeGreaterThan(0);
+    expect(o.costPartial).toBe(true);
+    const cost = { ...o.usage.cost };
+    applyMuseUsage(o, { usage: {} });
+    expect(o.usage.cost).toEqual(cost);
+    expect(o.costSource).toMatch(/^derived:/);
+    expect(o.costPartial).toBe(true);
   });
   it("projects quota verbatim, reports unknown as null, publishes status and exhausted boundary", () => {
     const usage = {

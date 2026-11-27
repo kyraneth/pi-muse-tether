@@ -1,3 +1,4 @@
+import {fixtureMeasureTurn} from "./fixture-measure.js";
 /** Offline regression from independent hook-order challenge; no vendor calls. */
 import {afterEach,expect,it} from "vitest";
 import {spawn} from "node:child_process";
@@ -17,6 +18,7 @@ it("continuation frames wait for response and follow the start event",async()=>{
   const host:any={batches:true,fencedReason:undefined,
    fence(reason:string){if(this.fencedReason===undefined){this.fencedReason=reason;emitHost({kind:"fenced",reason});}},
    async cancelTurn(){},async close(){for(const child of children){if(child.exitCode===null){const exit=new Promise(r=>child.once("exit",r));child.stdin.end();await exit;}}},
+   measureTurn:fixtureMeasureTurn,
    async submitInput(text:any){
     if(!batch)return {turnId:"t0",commandId:"c0"};
     const callId="a";
@@ -44,7 +46,8 @@ it("continuation frames wait for response and follow the start event",async()=>{
  expect(toolCall?.name).toBe("lookup");
  journal({id:"entry-1",type:"message",message:{role:"toolResult",toolCallId:toolCall.id,toolName:"lookup",content:[{type:"text",text:"Pi-a"}],isError:false}});
  // Native trailing text after the committed batch, while no episode is live.
- emitHost({kind:"frame",frame:{method:"item/delta",params:{field:"text",delta:"TRAILING_BEFORE_RESPONSE"}}});
+ emitHost({kind:"frame",frame:{method:"item/started",params:{item:{kind:"agentMessage",itemId:"trailing"}}}});
+ emitHost({kind:"frame",frame:{method:"item/delta",params:{itemId:"trailing",delta:"TRAILING_BEFORE_RESPONSE"}}});
  let release!:()=>void;let entered=false;let markEntered!:()=>void;
  const responseEntered=new Promise<void>(resolve=>{markEntered=resolve;});
  const gate=new Promise<void>(resolve=>{release=resolve;});
